@@ -1,0 +1,39 @@
+LiDAR Viewer Change History
+===========================
+
+LiDAR Viewer 1.0:
+- Beginning of history file
+
+LiDAR Viewer 1.1:
+- Made minor improvements to makefile
+- Improved a bunch of stuff in LidarViewer, but forgot to write it
+  down.
+
+LiDAR Viewer 1.2:
+- Included PrintPrimitiveFile, a utility to print a saved primitives
+  file, in human-readable format.
+- Fixed long-standing bug of "disappearing nodes," was due to not
+  properly invalidating cached nodes under full cache conditions.
+- Added workaround in sphere / cylinder extraction routine to accomodate
+  the broken g++ version 4.0.1 Apple insists on shipping with Xcode on
+  Mac OS X 10.5.
+
+LiDAR Viewer 1.3:
+- Added coordinate transformation to undo data offset; measurement tools
+  now report positions properly in LiDAR data's native coordinate
+  system.
+- Bumped up Vrui requirement to version 1.0-53.
+- Added support for generic comma-separated value (-csv) input file
+  format to LidarPreprocessor.
+- Extracted primitives can be selected (by clicking on them with a
+  dragging tool).
+- Selected primitives can be deleted after extraction.
+- Selected primitives can be intersected to form new primitives. For
+  example, intersecting two planes yields a line, intersecting three
+  planes or a plane and a line yields a point, etc.
+- A LidarTool can be used to map an input device (wand, mouse, etc.)
+  onto the LiDAR point cloud by shooting a ray from the input device,
+  and placing a virtual input device at the first intersection point.
+  The virtual input device can then be combined with other tools such
+  as LocatorTools for selection, DraggingTools to select primitives, or
+  a ComeHitherNavigationTool to navigate to the intersection point.
