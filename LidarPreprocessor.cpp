@@ -32,677 +32,73 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Math/Math.h>
 #include <Math/Constants.h>
 
-#include "TempPointOctree.h"
-#include "PointOctreeCreator.h"
+#include "LidarTypes.h"
+#include "PointAccumulator.h"
 #include "LidarOctreeCreator.h"
 
-namespace {
-
-/**************
-Helper classes:
-**************/
-
-class OctreePointLoader // Class to load point sets from input file and manage out-of-core storage
-	{
-	/* Elements: */
-	private:
-	unsigned int maxNumCachablePoints; // Maximum number of points allowed in memory at a time
-	std::vector<OctreePoint>* points; // Pointer to vector holding current in-memory point set
-	unsigned int maxNumPointsPerNode; // Maximum number of points per node in the temporary octrees
-	std::vector<TempPointOctree*> octrees; // List of octrees holding out-of-memory point sets
-	std::string tempPointOctreeFileNameTemplate; // File name template for temporary octrees
-	
-	/* Private methods: */
-	void savePoints(void) // Saves the current in-memory point set to a temporary octree file
-		{
-		/* Create a temporary octree for the current in-memory point set: */
-		std::cout<<std::endl<<"Storing "<<points->size()<<" points as temporary octree..."<<std::flush;
-		char tpofnt[1024];
-		strcpy(tpofnt,tempPointOctreeFileNameTemplate.c_str());
-		TempPointOctree* tpo=new TempPointOctree(tpofnt,maxNumPointsPerNode,&(*points)[0],points->size());
-		std::cout<<" done"<<std::endl;
-		octrees.push_back(tpo);
-		
-		/* Clear the point set: */
-		points->clear();
-		};
-	
-	/* Constructors and destructors: */
-	public:
-	OctreePointLoader(void) // Creates an in-core point loader
-		:maxNumCachablePoints(~0x0U),
-		 points(new std::vector<OctreePoint>),
-		 tempPointOctreeFileNameTemplate("/tmp/LidarPreprocessorTempOctreeXXXXXX")
-		{
-		};
-	~OctreePointLoader(void) // Destroys all point sets
-		{
-		/* Delete all point octrees: */
-		for(std::vector<TempPointOctree*>::iterator poIt=octrees.begin();poIt!=octrees.end();++poIt)
-			delete *poIt;
-		
-		/* Delete the in-memory point set: */
-		delete points;
-		};
-	
-	/* Methods: */
-	void setTempFileNameTemplate(const char* newTempFileNameTemplate) // Sets the template for temporary octree file names
-		{
-		tempPointOctreeFileNameTemplate=newTempFileNameTemplate;
-		};
-	void setMemorySize(unsigned int memorySize,unsigned int newMaxNumPointsPerNode) // Limits the point loader to the given amount of memory in megabytes
-		{
-		/* Set the memory limit: */
-		maxNumCachablePoints=(memorySize*1024U*1024U+sizeof(OctreePoint)-1)/sizeof(OctreePoint);
-		maxNumPointsPerNode=newMaxNumPointsPerNode;
-		
-		/* Check if the current point set is already too large: */
-		if(points->size()>maxNumCachablePoints)
-			{
-			/* Save the current point set: */
-			savePoints();
-			}
-		
-		/* Allocate the maximum amount of memory for the in-memory point set: */
-		points->reserve(maxNumCachablePoints);
-		};
-	void addOctree(const char* octreeFileNameStem) // Adds an existing LiDAR octree to the current point set
-		{
-		/* Load the existing octree as a temporary octree: */
-		TempPointOctree* tpo=new TempPointOctree(octreeFileNameStem,true);
-		octrees.push_back(tpo);
-		};
-	void addPoint(const OctreePoint& op) // Pushes an octree point into the current point set
-		{
-		/* Check if the current in-memory point set is too big: */
-		if(points->size()==maxNumCachablePoints)
-			{
-			/* Save the current point set: */
-			savePoints();
-			}
-		
-		/* Store the new point: */
-		points->push_back(op);
-		};
-	bool finishReading(void) // Finishes reading points from source files; returns true if out-of-core processing is necessary
-		{
-		#if 1
-		if(!points->empty())
-			{
-			/* Write the leftover in-memory points into another temporary octree: */
-			savePoints();
-			}
-		
-		/* Delete the in-memory point set: */
-		delete points;
-		points=0;
-		
-		/* Signal out-of-core processing: */
-		return true;
-		#else
-		if(!octrees.empty())
-			{
-			if(!points->empty())
-				{
-				/* Write the leftover in-memory points into another temporary octree: */
-				savePoints();
-				}
-			
-			/* Delete the in-memory point set: */
-			delete points;
-			points=0;
-			
-			/* Signal out-of-core processing: */
-			return true;
-			}
-		else
-			return false;
-		#endif
-		};
-	unsigned int getNumPoints(void) const // Returns the number of points in the in-memory point set
-		{
-		return points->size();
-		};
-	OctreePoint* getPoints(void) const // Returns the in-memory point set
-		{
-		return &(*points)[0];
-		};
-	std::vector<TempPointOctree*>& getTempOctrees(void) // Returns the list of temporary octrees
-		{
-		return octrees;
-		};
-	unsigned int getMaxNumCachablePoints(void) const // Returns the maximum number of points to be held in memory
-		{
-		return maxNumCachablePoints;
-		};
-	void deleteTempOctrees(void) // Deletes the temporary point octrees
-		{
-		/* Delete all point octrees: */
-		for(std::vector<TempPointOctree*>::iterator poIt=octrees.begin();poIt!=octrees.end();++poIt)
-			delete *poIt;
-		octrees.clear();
-		};
-	};
-
-}
-
-void loadPointFileBin(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
+void loadPointFileBin(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the binary input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
 	
 	/* Read the number of points in the file: */
-	unsigned int numPoints=file.read<unsigned int>();
+	size_t numPoints=file.read<unsigned int>();
 	
 	/* Read all points: */
-	for(unsigned int i=0;i<numPoints;++i)
+	for(size_t i=0;i<numPoints;++i)
 		{
 		/* Read the point position and intensity from the input file: */
 		float rp[4];
 		file.read(rp,4);
 		
 		/* Store the point position: */
-		OctreePoint p;
+		LidarPoint p;
 		for(int j=0;j<3;++j)
 			p[j]=rp[j];
 		
 		/* Convert the point intensity to and RGB color according to the color mask: */
 		for(int j=0;j<3;++j)
-			p.value[j]=GLubyte(Math::floor(rp[3]*colorMask[j]+0.5f));
-		p.value[3]=GLubyte(255);
+			p.value[j]=Color::Scalar(Math::floor(rp[3]*colorMask[j]+0.5f));
+		p.value[3]=Color::Scalar(255);
 		
 		/* Store the point: */
-		opl.addPoint(p);
+		pa.addPoint(p);
 		}
 	}
 
-void loadPointFileBinRgb(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
+void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the binary input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
 	
 	/* Read the number of points in the file: */
-	unsigned int numPoints=file.read<unsigned int>();
+	size_t numPoints=file.read<unsigned int>();
 	
 	/* Read all points: */
-	for(unsigned int i=0;i<numPoints;++i)
+	for(size_t i=0;i<numPoints;++i)
 		{
 		/* Read the point position and color from the input file: */
 		float rp[3];
 		file.read(rp,3);
-		GLubyte rcol[4];
+		Color::Scalar rcol[4];
 		file.read(rcol,4);
 		
 		/* Store the point position: */
-		OctreePoint p;
+		LidarPoint p;
 		for(int j=0;j<3;++j)
 			p[j]=rp[j];
 		
 		/* Modify the RGB color according to the color mask: */
 		for(int j=0;j<3;++j)
-			p.value[j]=GLubyte(Math::floor(float(rcol[j])*colorMask[j]+0.5f));
-		p.value[3]=GLubyte(255);
+			p.value[j]=Color::Scalar(Math::floor(float(rcol[j])*colorMask[j]+0.5f));
+		p.value[3]=Color::Scalar(255);
 		
 		/* Store the point: */
-		opl.addPoint(p);
+		pa.addPoint(p);
 		}
 	}
 
-void loadPointFileTxt(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates from the line: */
-		OctreePoint p;
-		if(sscanf(line,"%f %f %f",&p[0],&p[1],&p[2])==3)
-			{
-			for(int i=0;i<4;++i)
-				p.value[i]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileXyzi(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		OctreePoint p;
-		float intensity;
-		if(sscanf(line,"%f %f %f %f",&p[0],&p[1],&p[2],&intensity)==4&&intensity!=0.0f)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileGenericCsv(OctreePointLoader& opl,const char* fileName,const int columnIndices[4],const float colorMask[3])
-	{
-	/* Create the mapping from column indices to point components: */
-	int maxColumnIndex=columnIndices[0];
-	for(int i=1;i<4;++i)
-		if(maxColumnIndex<columnIndices[i])
-			maxColumnIndex=columnIndices[i];
-	int* componentColumnIndices=new int[maxColumnIndex+1];
-	for(int i=0;i<=maxColumnIndex;++i)
-		componentColumnIndices[i]=-1;
-	int numComponents=0;
-	for(int i=0;i<4;++i)
-		if(columnIndices[i]>=0)
-			{
-			componentColumnIndices[columnIndices[i]]=i;
-			++numComponents;
-			}
-	
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	float intensityMin=Math::Constants<float>::max;
-	float intensityMax=Math::Constants<float>::min;
-	char line[256];
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Separate and parse the columns: */
-		int numParsedColumns=0;
-		float componentValues[4];
-		componentValues[3]=1.0f;
-		char* columnStart=line;
-		for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
-			{
-			/* Find the end of the current column: */
-			char* columnEnd;
-			for(columnEnd=columnStart;*columnEnd!=','&&*columnEnd!='\n';++columnEnd)
-				;
-			char terminator=*columnEnd;
-			
-			if(componentColumnIndices[columnIndex]>=0)
-				{
-				/* Skip whitespace and quotes at the beginning and the end: */
-				char* valueStart=columnStart;
-				while(valueStart!=columnEnd&&(isspace(*valueStart)||*valueStart=='\"'))
-					++valueStart;
-				char* valueEnd=columnEnd;
-				while(valueEnd!=valueStart&&(isspace(valueEnd[-1])||valueEnd[-1]=='\"'))
-					--valueEnd;
-				
-				if(valueStart!=valueEnd)
-					{
-					/* Parse the column's value: */
-					*valueEnd='\0';
-					char* conversionEnd;
-					componentValues[componentColumnIndices[columnIndex]]=strtof(valueStart,&conversionEnd);
-					if(conversionEnd!=valueStart)
-						++numParsedColumns;
-					}
-				}
-			
-			/* Go to the next column: */
-			if(terminator=='\n')
-				break;
-			columnStart=columnEnd+1;
-			}
-		
-		if(numParsedColumns==numComponents)
-			{
-			/* Store the point position: */
-			OctreePoint p;
-			for(int i=0;i<3;++i)
-				p[i]=componentValues[i];
-			
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(componentValues[3]*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			if(intensityMin>componentValues[3])
-				intensityMin=componentValues[3];
-			if(intensityMax<componentValues[3])
-				intensityMax=componentValues[3];
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	std::cout<<"Point data intensity range: "<<intensityMin<<", "<<intensityMax<<std::endl;
-	
-	/* Clean up: */
-	delete[] componentColumnIndices;
-	}
-
-void loadPointFileGenericCsvRgb(OctreePointLoader& opl,const char* fileName,const int columnIndices[6],const float colorMask[3])
-	{
-	/* Create the mapping from column indices to point components: */
-	int maxColumnIndex=columnIndices[0];
-	for(int i=1;i<6;++i)
-		if(maxColumnIndex<columnIndices[i])
-			maxColumnIndex=columnIndices[i];
-	int* componentColumnIndices=new int[maxColumnIndex+1];
-	for(int i=0;i<=maxColumnIndex;++i)
-		componentColumnIndices[i]=-1;
-	int numComponents=0;
-	for(int i=0;i<6;++i)
-		if(columnIndices[i]>=0)
-			{
-			componentColumnIndices[columnIndices[i]]=i;
-			++numComponents;
-			}
-	
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	char line[256];
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Separate and parse the columns: */
-		int numParsedColumns=0;
-		float componentValues[6];
-		for(int i=3;i<6;++i)
-			componentValues[i]=1.0f;
-		char* columnStart=line;
-		for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
-			{
-			/* Find the end of the current column: */
-			char* columnEnd;
-			for(columnEnd=columnStart;*columnEnd!=','&&*columnEnd!='\n';++columnEnd)
-				;
-			char terminator=*columnEnd;
-			
-			if(componentColumnIndices[columnIndex]>=0)
-				{
-				/* Skip whitespace and quotes at the beginning and the end: */
-				char* valueStart=columnStart;
-				while(valueStart!=columnEnd&&(isspace(*valueStart)||*valueStart=='\"'))
-					++valueStart;
-				char* valueEnd=columnEnd;
-				while(valueEnd!=valueStart&&(isspace(valueEnd[-1])||valueEnd[-1]=='\"'))
-					--valueEnd;
-				
-				if(valueStart!=valueEnd)
-					{
-					/* Parse the column's value: */
-					*valueEnd='\0';
-					char* conversionEnd;
-					componentValues[componentColumnIndices[columnIndex]]=strtof(valueStart,&conversionEnd);
-					if(conversionEnd!=valueStart)
-						++numParsedColumns;
-					}
-				}
-			
-			/* Go to the next column: */
-			if(terminator=='\n')
-				break;
-			columnStart=columnEnd+1;
-			}
-		
-		if(numParsedColumns==numComponents)
-			{
-			/* Store the point position: */
-			OctreePoint p;
-			for(int i=0;i<3;++i)
-				p[i]=componentValues[i];
-			
-			/* Filter the read RGB color by the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(componentValues[3+i]*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	
-	/* Clean up: */
-	delete[] componentColumnIndices;
-	}
-
-void loadPointFileCsv(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	char line[256];
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		OctreePoint p;
-		float intensity;
-		if(sscanf(line,"%f,%f,%f,%f",&p[0],&p[1],&p[2],&intensity)==4&&intensity!=0.0f)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileCsvRgb(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	char line[256];
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		OctreePoint p;
-		float rgb[3];
-		if(sscanf(line,"%f,%f,%f,%f,%f,%f",&p[0],&p[1],&p[2],&rgb[0],&rgb[1],&rgb[2])==6)
-			{
-			/* Convert the read RGB values to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(rgb[i]*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileAll(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		float dummy;
-		OctreePoint p;
-		float intensity;
-		if(sscanf(line,"%f %f %f %f %f",&dummy,&p[0],&p[1],&p[2],&intensity)==5&&intensity!=0.0f)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileXyzrgb(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Skip comment lines: */
-		if(line[0]=='#')
-			continue;
-		
-		/* Parse the point coordinates and RGB color from the line: */
-		OctreePoint p;
-		float rgb[3];
-		if(sscanf(line,"%f %f %f %f %f %f",&p[0],&p[1],&p[2],&rgb[0],&rgb[1],&rgb[2])==6)
-			{
-			/* Process the RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(rgb[i]*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFilePts(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Skip the header line (don't know what it means): */
-	char line[256];
-	file.gets(line,sizeof(line));
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and RGB color from the line: */
-		OctreePoint p;
-		float dummy;
-		float rgb[3];
-		if(sscanf(line,"%f %f %f %f %f %f %f",&p[0],&p[1],&p[2],&dummy,&rgb[0],&rgb[1],&rgb[2])==7)
-			{
-			/* Process the RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(rgb[i]*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileTimeXyzi(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		float time;
-		OctreePoint p;
-		int returnNumber;
-		float dummy;
-		float intensity;
-		if(sscanf(line,"%f %f %f %f %d %f %f",&time,&p[0],&p[1],&p[2],&returnNumber,&dummy,&intensity)==7&&intensity!=0.0f)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileAsc(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
-	{
-	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
-	
-	/* Read and otherwise ignore the header line: */
-	char line[256];
-	file.gets(line,sizeof(line));
-	
-	/* Read all lines from the input file: */
-	while(!file.eof())
-		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Parse the point coordinates and intensity from the line: */
-		OctreePoint p;
-		float date,time;
-		int returnNumber,numReturns;
-		float offNidar;
-		float intensity;
-		if(sscanf(line,"%f,%f,%f,%f,%f,%d,%d,%f,%f",&p[0],&p[1],&p[2],&time,&date,&returnNumber,&numReturns,&offNidar,&intensity)==9&&intensity!=0.0f)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=GLubyte(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=GLubyte(255);
-			
-			/* Store the point: */
-			opl.addPoint(p);
-			}
-		}
-	}
-
-void loadPointFileLas(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
+void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the LAS input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
@@ -730,7 +126,7 @@ void loadPointFileLas(OctreePointLoader& opl,const char* fileName,const float co
 	file.read<unsigned int>(); // Ignore number of variable-length records
 	unsigned char pointDataFormat=file.read<unsigned char>();
 	unsigned short pointDataRecordLength=file.read<unsigned short>();
-	unsigned int numPointRecords=file.read<unsigned int>();
+	size_t numPointRecords=file.read<unsigned int>();
 	unsigned int numPointsByReturn[5];
 	file.read(numPointsByReturn,5);
 	double scale[3];
@@ -746,10 +142,10 @@ void loadPointFileLas(OctreePointLoader& opl,const char* fileName,const float co
 	
 	/* Read all points: */
 	file.seekSet(pointDataOffset);
-	for(unsigned int i=0;i<numPointRecords;++i)
+	for(size_t i=0;i<numPointRecords;++i)
 		{
 		/* Read this point: */
-		OctreePoint p;
+		LidarPoint p;
 		
 		/* Read the point position: */
 		int pos[3];
@@ -760,8 +156,8 @@ void loadPointFileLas(OctreePointLoader& opl,const char* fileName,const float co
 		/* Read the point intensity: */
 		float intensity=float(file.read<unsigned short>());
 		for(int j=0;j<3;++j)
-			p.value[j]=GLubyte(Math::floor(intensity*colorMask[j]+0.5f));
-		p.value[3]=GLubyte(255);
+			p.value[j]=Color::Scalar(Math::floor(intensity*colorMask[j]+0.5f));
+		p.value[3]=Color::Scalar(255);
 		
 		/* Ignore the rest of the point record: */
 		char dummy[4];
@@ -771,8 +167,216 @@ void loadPointFileLas(OctreePointLoader& opl,const char* fileName,const float co
 			file.read<double>();
 		
 		/* Store the point: */
-		opl.addPoint(p);
+		pa.addPoint(p);
 		}
+	}
+
+void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+	{
+	/* Open the ASCII input file: */
+	Misc::File file(fileName,"rt");
+	
+	/* Read all lines from the input file: */
+	while(!file.eof())
+		{
+		/* Read the next line from the file: */
+		char line[256];
+		file.gets(line,sizeof(line));
+		
+		/* Skip comment lines: */
+		if(line[0]=='#')
+			continue;
+		
+		/* Parse the point coordinates and intensity from the line: */
+		LidarPoint p;
+		float intensity;
+		if(sscanf(line,"%f %f %f %f",&p[0],&p[1],&p[2],&intensity)==4)
+			{
+			/* Convert the read intensity to an RGB color according to the color mask: */
+			for(int i=0;i<3;++i)
+				p.value[i]=Color::Scalar(Math::floor(intensity*colorMask[i]+0.5f));
+			p.value[3]=Color::Scalar(255);
+			
+			/* Store the point: */
+			pa.addPoint(p);
+			}
+		}
+	}
+
+void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+	{
+	/* Open the ASCII input file: */
+	Misc::File file(fileName,"rt");
+	
+	/* Read all lines from the input file: */
+	while(!file.eof())
+		{
+		/* Read the next line from the file: */
+		char line[256];
+		file.gets(line,sizeof(line));
+		
+		/* Skip comment lines: */
+		if(line[0]=='#')
+			continue;
+		
+		/* Parse the point coordinates and RGB color from the line: */
+		LidarPoint p;
+		float rgb[3];
+		if(sscanf(line,"%f %f %f %f %f %f",&p[0],&p[1],&p[2],&rgb[0],&rgb[1],&rgb[2])==6)
+			{
+			/* Process the RGB color according to the color mask: */
+			for(int i=0;i<3;++i)
+				p.value[i]=Color::Scalar(Math::floor(rgb[i]*colorMask[i]+0.5f));
+			p.value[3]=Color::Scalar(255);
+			
+			/* Store the point: */
+			pa.addPoint(p);
+			}
+		}
+	}
+
+void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,bool strictCsv,bool rgb,const int columnIndices[6],const float colorMask[3])
+	{
+	/* Create the mapping from column indices to point components: */
+	int maxColumnIndex=columnIndices[0];
+	for(int i=1;i<6;++i)
+		if(maxColumnIndex<columnIndices[i])
+			maxColumnIndex=columnIndices[i];
+	int* componentColumnIndices=new int[maxColumnIndex+1];
+	for(int i=0;i<=maxColumnIndex;++i)
+		componentColumnIndices[i]=-1;
+	int numComponents=0;
+	for(int i=0;i<6;++i)
+		if(columnIndices[i]>=0)
+			{
+			componentColumnIndices[columnIndices[i]]=i;
+			++numComponents;
+			}
+	
+	/* Open the ASCII input file: */
+	Misc::File file(fileName,"rt");
+	
+	/* Read all lines from the input file: */
+	float intensityMin=Math::Constants<float>::max;
+	float intensityMax=Math::Constants<float>::min;
+	char line[256];
+	while(!file.eof())
+		{
+		/* Read the next line from the file: */
+		file.gets(line,sizeof(line));
+		
+		/* Separate and parse the columns: */
+		int numParsedColumns=0;
+		float componentValues[4];
+		componentValues[3]=255.0f;
+		char* columnStart=line;
+		for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
+			{
+			/* Skip whitespace: */
+			while(*columnStart!='\0'&&isspace(*columnStart))
+				++columnStart;
+			
+			/* Stop if end of line is reached: */
+			if(*columnStart=='\0')
+				break;
+			
+			/* Find the start and end of the current column's value: */
+			char* valueStart;
+			char* valueEnd;
+			char* columnEnd;
+			if(*columnStart=='\"')
+				{
+				/* Process a quoted value: */
+				valueStart=columnStart+1;
+				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!='\"';++valueEnd)
+					;
+				columnEnd=valueEnd;
+				if(*columnEnd=='\"')
+					++columnEnd;
+				}
+			else if(strictCsv)
+				{
+				/* Process an unquoted value according to strict CSV file rules: */
+				valueStart=columnStart;
+				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!=',';++valueEnd)
+					;
+				columnEnd=valueEnd;
+				}
+			else
+				{
+				/* Process an unquoted value according to relaxed CSV / space-separated rules: */
+				valueStart=columnStart;
+				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!=','&&!isspace(*valueEnd);++valueEnd)
+					;
+				columnEnd=valueEnd;
+				}
+			
+			/* Process the value if needed: */
+			if(componentColumnIndices[columnIndex]>=0)
+				{
+				/* Process the value and check if anything was processed: */
+				char* conversionEnd;
+				componentValues[componentColumnIndices[columnIndex]]=strtof(valueStart,&conversionEnd);
+				if(conversionEnd!=valueStart)
+					++numParsedColumns;
+				}
+			
+			/* Find the end of the column: */
+			while(*columnEnd!='\0'&&isspace(*columnEnd))
+				++columnEnd;
+			
+			/* Skip a potential separating comma: */
+			if(*columnEnd==',')
+				++columnEnd;
+			
+			/* Go to the next column: */
+			columnStart=columnEnd;
+			}
+		
+		/* Check if all required columns have been read: */
+		if(numParsedColumns==numComponents)
+			{
+			/* Store the point position: */
+			LidarPoint p;
+			for(int i=0;i<3;++i)
+				p[i]=componentValues[i];
+			
+			if(rgb)
+				{
+				/* Modify the read RGB color according to the color mask: */
+				for(int i=0;i<3;++i)
+					{
+					p.value[i]=Color::Scalar(Math::floor(componentValues[3+i]*colorMask[i]+0.5f));
+					if(intensityMin>componentValues[3+i])
+						intensityMin=componentValues[3+i];
+					if(intensityMax<componentValues[3+i])
+						intensityMax=componentValues[3+i];
+					}
+				}
+			else
+				{
+				/* Convert the read intensity to an RGB color according to the color mask: */
+				for(int i=0;i<3;++i)
+					p.value[i]=Color::Scalar(Math::floor(componentValues[3]*colorMask[i]+0.5f));
+				
+				if(intensityMin>componentValues[3])
+					intensityMin=componentValues[3];
+				if(intensityMax<componentValues[3])
+					intensityMax=componentValues[3];
+				}
+			p.value[3]=Color::Scalar(255);
+			
+			/* Store the point: */
+			pa.addPoint(p);
+			}
+		}
+	if(rgb)
+		std::cout<<"Point data RGB component range: "<<intensityMin<<", "<<intensityMax<<std::endl;
+	else
+		std::cout<<"Point data intensity range: "<<intensityMin<<", "<<intensityMax<<std::endl;
+	
+	/* Clean up: */
+	delete[] componentColumnIndices;
 	}
 
 /**********************************
@@ -860,7 +464,7 @@ class EndiannessSwapper<IDLFileRecord>
 		swapEndianness(value.absMagBvrik,5);
 		swapEndianness(value.absMagBvrikBulge,5);
 		swapEndianness(value.absMagBvrikNoDust,5);
-		};
+		}
 	};
 
 }
@@ -892,13 +496,13 @@ double angdiadistscaled(double z)
 		}
 	}
 
-void loadPointFileIdl(OctreePointLoader& opl,const char* fileName,const float colorMask[3])
+void loadPointFileIdl(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the IDL input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
 	
 	/* Read the IDL file header: */
-	unsigned int numRecords=file.read<unsigned int>();
+	size_t numRecords=file.read<unsigned int>();
 	
 	/* Read all records: */
 	float massMin=Math::Constants<float>::max;
@@ -909,14 +513,14 @@ void loadPointFileIdl(OctreePointLoader& opl,const char* fileName,const float co
 		rgbMin[j]=Math::Constants<float>::max;
 		rgbMax[j]=Math::Constants<float>::min;
 		}
-	for(unsigned int i=0;i<numRecords;++i)
+	for(size_t i=0;i<numRecords;++i)
 		{
 		/* Read the next record: */
 		IDLFileRecord record;
 		file.read(record);
 		
 		/* Create a point: */
-		OctreePoint p;
+		LidarPoint p;
 		#if 0
 		for(int i=0;i<3;++i)
 			p[i]=record.position[i];
@@ -947,18 +551,18 @@ void loadPointFileIdl(OctreePointLoader& opl,const char* fileName,const float co
 			if(rgbMax[j]<rgb[j])
 				rgbMax[j]=rgb[j];
 			if(rgb[j]<0.5f)
-				p.value[j]=GLubyte(0);
+				p.value[j]=Color::Scalar(0);
 			else if(rgb[j]>=254.5f)
-				p.value[j]=GLubyte(255);
+				p.value[j]=Color::Scalar(255);
 			else
-				p.value[j]=GLubyte(Math::floor(rgb[j]+0.5f));
+				p.value[j]=Color::Scalar(Math::floor(rgb[j]+0.5f));
 			}
-		p.value[3]=GLubyte(255);
+		p.value[3]=Color::Scalar(255);
 		
 		// if(record.recordType==0)
 			{
 			/* Store the point: */
-			opl.addPoint(p);
+			pa.addPoint(p);
 			}
 		}
 	
@@ -975,48 +579,53 @@ struct OldLidarOctreeFileHeader // Header structure for old LiDAR octree files
 	/* Elements: */
 	public:
 	Point center; // Center of the cube containing all LiDAR points
-	float radius; // Radius (half side length) of cube containing all LiDAR points
+	Scalar radius; // Radius (half side length) of cube containing all LiDAR points
 	unsigned int maxNumPointsPerNode; // Maximum number of points stored in each octree node
 	
-	/* Methods: */
-	static size_t getSize(void) // Returns the file size of the header
-		{
-		return sizeof(Point)+sizeof(float)+sizeof(unsigned int);
-		};
-	void read(Misc::LargeFile& file) // Reads the header from file
+	/* Constructors and destructors: */
+	OldLidarOctreeFileHeader(Misc::LargeFile& file) // Reads the header from file
 		{
 		file.read(center.getComponents(),3);
 		file.read(radius);
 		file.read(maxNumPointsPerNode);
-		};
+		}
+	
+	/* Methods: */
+	static size_t getSize(void) // Returns the file size of the header
+		{
+		return sizeof(Point)+sizeof(Scalar)+sizeof(unsigned int);
+		}
 	};
 
-struct OldLidarOctreeFileNode // Structure for a node in an old LiDAR octree file
+struct OldLidarOctreeFileNode // Structure for a node in a LiDAR octree file
 	{
 	/* Elements: */
 	public:
 	Misc::LargeFile::Offset childrenOffset; // Offset of the node's children in the octree file (or 0 if leaf node)
+	Scalar detailSize; // Detail size of this node, for proper LOD computation
 	unsigned int numPoints; // Number of points in the node
 	Misc::LargeFile::Offset pointsOffset; // Offset of the node's points in the points file
+	
+	/* Constructors and destructors: */
+	OldLidarOctreeFileNode(Misc::LargeFile& file) // Reads the octree node from file
+		{
+		file.read(childrenOffset);
+		file.read(detailSize);
+		file.read(pointsOffset);
+		file.read(numPoints);
+		}
 	
 	/* Methods: */
 	static size_t getSize(void) // Returns the file size of an octree node
 		{
-		return sizeof(Misc::LargeFile::Offset)+sizeof(Misc::LargeFile::Offset)+sizeof(unsigned int);
-		};
-	void read(Misc::LargeFile& file) // Reads the octree node from file
-		{
-		file.read(childrenOffset);
-		file.read(pointsOffset);
-		file.read(numPoints);
-		};
+		return sizeof(Misc::LargeFile::Offset)+sizeof(Scalar)+sizeof(Misc::LargeFile::Offset)+sizeof(unsigned int);
+		}
 	};
 
-void readSubtree(OctreePointLoader& opl,Misc::LargeFile& octFile,Misc::LargeFile& obinFile,const float colorMask[3])
+void readOctreeFileSubtree(PointAccumulator& pa,Misc::LargeFile& octFile,Misc::LargeFile& obinFile,const float colorMask[3])
 	{
 	/* Read the node's header from the octree file: */
-	OldLidarOctreeFileNode ofn;
-	ofn.read(octFile);
+	OldLidarOctreeFileNode ofn(octFile);
 	
 	if(ofn.childrenOffset!=0)
 		{
@@ -1025,7 +634,7 @@ void readSubtree(OctreePointLoader& opl,Misc::LargeFile& octFile,Misc::LargeFile
 		for(int childIndex=0;childIndex<8;++childIndex,childOffset+=OldLidarOctreeFileNode::getSize())
 			{
 			octFile.seekSet(childOffset);
-			readSubtree(opl,octFile,obinFile,colorMask);
+			readOctreeFileSubtree(pa,octFile,obinFile,colorMask);
 			}
 		}
 	else if(ofn.numPoints>0)
@@ -1035,28 +644,28 @@ void readSubtree(OctreePointLoader& opl,Misc::LargeFile& octFile,Misc::LargeFile
 		for(unsigned int i=0;i<ofn.numPoints;++i)
 			{
 			LidarPoint p;
-			obinFile.read<float>(p.getComponents(),3);
-			obinFile.read<GLubyte>(p.value.getRgba(),4);
-			opl.addPoint(p);
+			obinFile.read(p.getComponents(),3);
+			obinFile.read(p.value.getRgba(),4);
+			pa.addPoint(p);
 			}
 		}
 	}
 
-void loadPointFileOctree(OctreePointLoader& opl,const char* fileNameStem,const float colorMask[3])
+void loadPointFileOctree(PointAccumulator& pa,const char* fileNameStem,const float colorMask[3])
 	{
 	/* Open the input octree structure and octree point files: */
-	char octFileName[1024],obinFileName[1024];
+	char octFileName[1024];
 	snprintf(octFileName,sizeof(octFileName),"%s.oct",fileNameStem);
-	snprintf(obinFileName,sizeof(obinFileName),"%s.obin",fileNameStem);
 	Misc::LargeFile octFile(octFileName,"rb",Misc::LargeFile::LittleEndian);
+	char obinFileName[1024];
+	snprintf(obinFileName,sizeof(obinFileName),"%s.obin",fileNameStem);
 	Misc::LargeFile obinFile(obinFileName,"rb",Misc::LargeFile::LittleEndian);
 	
 	/* Read the octree structure file header: */
-	OldLidarOctreeFileHeader ofh;
-	ofh.read(octFile);
+	OldLidarOctreeFileHeader ofh(octFile);
 	
 	/* Read all original points from the octree: */
-	readSubtree(opl,octFile,obinFile,colorMask);
+	readOctreeFileSubtree(pa,octFile,obinFile,colorMask);
 	}
 
 /**************
@@ -1068,21 +677,49 @@ enum PointFileType // Enumerated type for point file formats
 	AUTO, // Tries to autodetect input file format based on file name extension
 	BIN, // Simple binary format: number of points followed by (x, y, z, i) tuples
 	BINRGB, // Simple binary format: number of points followed by (x, y, z, r, g, b) tuples
-	TXT, // Simple ASCII format: rows containing (x, y, z) tuples
-	XYZI, // Simple ASCII format: rows containing (x, y, z, i) tuples
-	CSV, // Generic CSV format with intensity values; needs column index mapping to work
-	CSVRGB, // Generic CSV format with RGB values; needs column index mapping to work
-	ALL, // Simple ASCII format: rows containing (GPS time, x, y, z, i) tuples (used in B4 data)
-	XYZRGB, // Simple ASCII format: rows containing (x, y, z, r, g, b) tuples
-	PTS, // Simple ASCII format: rows containing (x, y, z, something, r, g, b) tuples
-	TIMEXYZI, // Simple ASCII format: rows containing (x, y, z, i) tuples and some ignored data columns
-	ASC, // ASCII input file in comma-separated format (GEON format?)
-	LAS, // Binary interchange format for airborne LiDAR data
-	IDL, // Binary interchange format for astronomical applications
+	LAS, // Standard binary LiDAR point cloud interchange format
+	XYZI, // Simple ASCII format: rows containing space-separated (x, y, z, i) tuples
+	XYZRGB, // Simple ASCII format: rows containing space-separated (x, y, z, r, g, b) tuples
+	ASCII, // Generic ASCII format with intensity data
+	ASCIIRGB, // Generic ASCII format with RGB data
+	CSV, // Strict comma-separated values file with intensity data
+	CSVRGB, // Strict comma-separated values file with RGB data
+	IDL, // Redshift data file in IDL format
 	OCTREE, // Point octree file in old file format
-	OCTREENEW, // Point octree file in new file format (bypasses temporary octree creation)
 	ILLEGAL
 	};
+
+/****************
+Helper functions:
+****************/
+
+bool readColumnIndexMask(int argc,char* argv[],int& argi,int columnIndices[6])
+	{
+	/* Initialize the column indices to invalid: */
+	for(int i=0;i<6;++i)
+		columnIndices[i]=-1;
+	
+	/* Read all parameters that are integers: */
+	for(int i=0;i<6;++i)
+		{
+		++argi;
+		if(argi<argc)
+			{
+			char* conversionEnd;
+			int value=int(strtol(argv[argi],&conversionEnd,10));
+			if(*conversionEnd=='\0')
+				columnIndices[i]=value;
+			else
+				{
+				--argi;
+				break;
+				}
+			}
+		}
+	
+	/* Check if the index array at least contains x, y, z components: */
+	return columnIndices[0]>=0&&columnIndices[1]>=0&&columnIndices[2]>=0;
+	}
 
 int main(int argc,char* argv[])
 	{
@@ -1090,12 +727,11 @@ int main(int argc,char* argv[])
 	Misc::Timer loadTimer;
 	const char* outputFileName=0;
 	unsigned int maxPointsPerNode=1024;
-	unsigned int subsamplingFactor=4;
-	OctreePointLoader opl;
+	PointAccumulator pa;
 	const char* tempPointsFileNameTemplate="/tmp/LidarPreprocessorTempPointsXXXXXX";
 	PointFileType pointFileType=AUTO;
 	float colorMask[3]={1.0f,1.0f,1.0f};
-	int csvColumnIndices[6];
+	int asciiColumnIndices[6];
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -1116,19 +752,11 @@ int main(int argc,char* argv[])
 				else
 					std::cerr<<"Dangling -np flag on command line"<<std::endl;
 				}
-			else if(strcasecmp(argv[i]+1,"sf")==0)
-				{
-				++i;
-				if(i<argc)
-					subsamplingFactor=(unsigned int)(atoi(argv[i]));
-				else
-					std::cerr<<"Dangling -sf flag on command line"<<std::endl;
-				}
 			else if(strcasecmp(argv[i]+1,"ooc")==0)
 				{
 				++i;
 				if(i<argc)
-					opl.setMemorySize(atoi(argv[i]),maxPointsPerNode);
+					pa.setMemorySize(atoi(argv[i]),pa.getMaxNumPointsPerNode());
 				else
 					std::cerr<<"Dangling -ooc flag on command line"<<std::endl;
 				}
@@ -1136,7 +764,7 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					opl.setTempFileNameTemplate(argv[i]);
+					pa.setTempOctreeFileNameTemplate(argv[i]);
 				else
 					std::cerr<<"Dangling -to flag on command line"<<std::endl;
 				}
@@ -1170,46 +798,60 @@ int main(int argc,char* argv[])
 				pointFileType=BIN;
 			else if(strcasecmp(argv[i]+1,"binrgb")==0)
 				pointFileType=BINRGB;
-			else if(strcasecmp(argv[i]+1,"txt")==0)
-				pointFileType=TXT;
+			else if(strcasecmp(argv[i]+1,"las")==0)
+				pointFileType=LAS;
 			else if(strcasecmp(argv[i]+1,"xyzi")==0)
 				pointFileType=XYZI;
+			else if(strcasecmp(argv[i]+1,"xyzrgb")==0)
+				pointFileType=XYZRGB;
+			else if(strcasecmp(argv[i]+1,"ascii")==0)
+				{
+				pointFileType=ASCII;
+				
+				/* Read the column index mask: */
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for ASCII file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
+				}
+			else if(strcasecmp(argv[i]+1,"asciirgb")==0)
+				{
+				pointFileType=ASCIIRGB;
+				
+				/* Read the column index mask: */
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for RGB ASCII file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
+				}
 			else if(strcasecmp(argv[i]+1,"csv")==0)
 				{
 				pointFileType=CSV;
 				
 				/* Read the column index mask: */
-				for(int j=0;j<4;++j)
-					csvColumnIndices[j]=atoi(argv[i+j+1]);
-				i+=4;
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for CSV file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
 				}
 			else if(strcasecmp(argv[i]+1,"csvrgb")==0)
 				{
 				pointFileType=CSVRGB;
 				
 				/* Read the column index mask: */
-				for(int j=0;j<6;++j)
-					csvColumnIndices[j]=atoi(argv[i+j+1]);
-				i+=6;
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for RGB CSV file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
 				}
-			else if(strcasecmp(argv[i]+1,"all")==0)
-				pointFileType=ALL;
-			else if(strcasecmp(argv[i]+1,"xyzrgb")==0)
-				pointFileType=XYZRGB;
-			else if(strcasecmp(argv[i]+1,"pts")==0)
-				pointFileType=PTS;
-			else if(strcasecmp(argv[i]+1,"timexyzi")==0)
-				pointFileType=TIMEXYZI;
-			else if(strcasecmp(argv[i]+1,"asc")==0)
-				pointFileType=ASC;
-			else if(strcasecmp(argv[i]+1,"las")==0)
-				pointFileType=LAS;
 			else if(strcasecmp(argv[i]+1,"idl")==0)
 				pointFileType=IDL;
 			else if(strcasecmp(argv[i]+1,"oct")==0)
 				pointFileType=OCTREE;
-			else if(strcasecmp(argv[i]+1,"octnew")==0)
-				pointFileType=OCTREENEW;
 			else
 				std::cerr<<"Unrecognized command line option "<<argv[i]<<std::endl;
 			}
@@ -1229,22 +871,14 @@ int main(int argc,char* argv[])
 					thisPointFileType=BIN;
 				else if(strcasecmp(extPtr,".binrgb")==0)
 					thisPointFileType=BINRGB;
-				else if(strcasecmp(extPtr,".txt")==0)
-					thisPointFileType=TXT;
-				else if(strcasecmp(extPtr,".xyzi")==0)
-					thisPointFileType=XYZI;
-				else if(strcasecmp(extPtr,".all")==0)
-					thisPointFileType=ALL;
-				else if(strcasecmp(extPtr,".xyzrgb")==0)
-					thisPointFileType=XYZRGB;
-				else if(strcasecmp(extPtr,".pts")==0)
-					thisPointFileType=PTS;
-				else if(strcasecmp(extPtr,".xyzi")==0)
-					thisPointFileType=XYZI;
-				else if(strcasecmp(extPtr,".asc")==0)
-					thisPointFileType=ASC;
 				else if(strcasecmp(extPtr,".las")==0)
 					thisPointFileType=LAS;
+				else if(strcasecmp(extPtr,".xyzi")==0)
+					thisPointFileType=XYZI;
+				else if(strcasecmp(extPtr,".xyzrgb")==0)
+					thisPointFileType=XYZI;
+				else if(strcasecmp(extPtr,".oct")==0)
+					thisPointFileType=OCTREE;
 				else
 					thisPointFileType=ILLEGAL;
 				}
@@ -1253,96 +887,72 @@ int main(int argc,char* argv[])
 				{
 				case BIN:
 					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileBin(opl,argv[i],colorMask);
+					loadPointFileBin(pa,argv[i],colorMask);
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case BINRGB:
-					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileBinRgb(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case TXT:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileTxt(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case XYZI:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileXyzi(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case CSV:
-					std::cout<<"Processing CSV input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericCsv(opl,argv[i],csvColumnIndices,colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case CSVRGB:
-					std::cout<<"Processing CSV input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericCsvRgb(opl,argv[i],csvColumnIndices,colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case ALL:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileAll(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case XYZRGB:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileXyzrgb(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case PTS:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFilePts(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case TIMEXYZI:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileTimeXyzi(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case ASC:
-					std::cout<<"Processing ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileAsc(opl,argv[i],colorMask);
+					std::cout<<"Processing RGB binary input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileBinRgb(pa,argv[i],colorMask);
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case LAS:
 					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileLas(opl,argv[i],colorMask);
+					loadPointFileLas(pa,argv[i],colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case XYZI:
+					std::cout<<"Processing XYZI input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileXyzi(pa,argv[i],colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case XYZRGB:
+					std::cout<<"Processing XYZRGB input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileXyzrgb(pa,argv[i],colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case ASCII:
+					std::cout<<"Processing generic ASCII input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileGenericASCII(pa,argv[i],false,false,asciiColumnIndices,colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case ASCIIRGB:
+					std::cout<<"Processing generic RGB ASCII input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileGenericASCII(pa,argv[i],false,true,asciiColumnIndices,colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case CSV:
+					std::cout<<"Processing generic CSV input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileGenericASCII(pa,argv[i],true,false,asciiColumnIndices,colorMask);
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case CSVRGB:
+					std::cout<<"Processing generic RGB CSV input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileGenericASCII(pa,argv[i],true,true,asciiColumnIndices,colorMask);
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case IDL:
-					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileIdl(opl,argv[i],colorMask);
+					std::cout<<"Processing redshift IDL input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileIdl(pa,argv[i],colorMask);
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case OCTREE:
-					std::cout<<"Processing point octree input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileOctree(opl,argv[i],colorMask);
-					std::cout<<" done."<<std::endl;
-					break;
-				
-				case OCTREENEW:
-					std::cout<<"Processing point octree input file "<<argv[i]<<"..."<<std::flush;
-					opl.addOctree(argv[i]);
+					std::cout<<"Processing LiDAR octree input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileOctree(pa,argv[i],colorMask);
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				default:
-					std::cerr<<"Input file "<<argv[i]<<" has an unrecognized file name extension"<<std::endl;
+					std::cerr<<"Input file "<<argv[i]<<" has an unrecognized file format"<<std::endl;
 				}
 			}
 		}
@@ -1350,54 +960,41 @@ int main(int argc,char* argv[])
 	/* Check if an output file name was given: */
 	if(outputFileName==0)
 		{
-		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> -np <max points per node> [-c <color mask>] <input file 1> ... <input file n>"<<std::endl;
+		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> -np <max points per node> <input file spec 1> ... <input file spec n>"<<std::endl;
+		std::cerr<<"Input file spec: [-c <red> <green> <blue>] <format spec> <file name>"<<std::endl;
+		std::cerr<<"Format spec: -AUTO"<<std::endl;
+		std::cerr<<"             -BIN"<<std::endl;
+		std::cerr<<"             -BINRGB"<<std::endl;
+		std::cerr<<"             -LAS"<<std::endl;
+		std::cerr<<"             -XYZI"<<std::endl;
+		std::cerr<<"             -XYZRGB"<<std::endl;
+		std::cerr<<"             -ASCII <x column> <y column> <z column> [<intensity column>]"<<std::endl;
+		std::cerr<<"             -ASCIIRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
+		std::cerr<<"             -CSV <x column> <y column> <z column> [<intensity column>]"<<std::endl;
+		std::cerr<<"             -CSVRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
+		std::cerr<<"             -IDL"<<std::endl;
+		std::cerr<<"             -OCTREE"<<std::endl;
 		return 1;
 		}
 	
-	/* Finish reading points and check if out-of-core processing is required: */
-	if(opl.finishReading())
-		{
-		loadTimer.elapse();
-		
-		/* Construct an octree with less than maxPointsPerNode points per leaf: */
-		Misc::Timer createTimer;
-		char tpfnt[1024];
-		strcpy(tpfnt,tempPointsFileNameTemplate);
-		PointOctreeCreator tree(tpfnt,opl.getTempOctrees(),opl.getMaxNumCachablePoints(),maxPointsPerNode,subsamplingFactor);
-		
-		/* Delete the temporary point octrees: */
-		opl.deleteTempOctrees();
-		createTimer.elapse();
-		
-		/* Write the octree structure and data to two files: */
-		Misc::Timer writeTimer;
-		char octFileName[1024],obinFileName[1024];
-		snprintf(octFileName,sizeof(octFileName),"%s.oct",outputFileName);
-		snprintf(obinFileName,sizeof(obinFileName),"%s.obin",outputFileName);
-		tree.write(octFileName,obinFileName);
-		writeTimer.elapse();
-		
-		std::cout<<"Time to load input data: "<<loadTimer.getTime()<<"s, time to create octree: "<<createTimer.getTime()<<"s, time to write final octree files: "<<writeTimer.getTime()<<"s"<<std::endl;
-		}
-	else
-		{
-		loadTimer.elapse();
-		
-		/* Construct an octree with less than maxPointsPerNode points per leaf: */
-		Misc::Timer createTimer;
-		LidarOctreeCreator tree(opl.getPoints(),opl.getNumPoints(),maxPointsPerNode,subsamplingFactor);
-		createTimer.elapse();
-		
-		/* Write the octree structure and data to two files: */
-		Misc::Timer writeTimer;
-		char octFileName[1024],obinFileName[1024];
-		snprintf(octFileName,sizeof(octFileName),"%s.oct",outputFileName);
-		snprintf(obinFileName,sizeof(obinFileName),"%s.obin",outputFileName);
-		tree.write(octFileName,obinFileName);
-		writeTimer.elapse();
-		
-		std::cout<<"Time to load input data: "<<loadTimer.getTime()<<"s, time to create octree: "<<createTimer.getTime()<<"s, time to write final octree files: "<<writeTimer.getTime()<<"s"<<std::endl;
-		}
+	/* Finish reading points: */
+	pa.finishReading();
+	loadTimer.elapse();
+	
+	/* Construct an octree with less than maxPointsPerNode points per leaf: */
+	Misc::Timer createTimer;
+	LidarOctreeCreator tree(pa.getMaxNumCacheablePoints(),maxPointsPerNode,pa.getTempOctrees(),tempPointsFileNameTemplate);
+	
+	/* Delete the temporary point octrees: */
+	pa.deleteTempOctrees();
+	createTimer.elapse();
+	
+	/* Write the octree structure and data to the destination LiDAR file: */
+	Misc::Timer writeTimer;
+	tree.write(outputFileName);
+	writeTimer.elapse();
+
+	std::cout<<"Time to load input data: "<<loadTimer.getTime()<<"s, time to create octree: "<<createTimer.getTime()<<"s, time to write final octree files: "<<writeTimer.getTime()<<"s"<<std::endl;
 	
 	return 0;
 	}

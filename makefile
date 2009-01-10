@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2008 Oliver Kreylos
+# Copyright (c) 2004-2009 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -70,8 +70,8 @@ $(OBJDIR)/%.o: %.cpp
 
 # Rule to build all LiDAR Viewer components:
 ALL = $(BINDIR)/LidarPreprocessor \
-      $(BINDIR)/LidarViewer \
-      $(BINDIR)/PrintPrimitiveFile
+      $(BINDIR)/LidarIlluminator \
+      $(BINDIR)/LidarViewer
 .PHONY: all
 all: $(ALL)
 
@@ -87,9 +87,9 @@ distclean:
 	-rm -rf $(BINDIRBASE)
 
 LIDARPREPROCESSOR_SOURCES = SplitPoints.cpp \
-                            TempPointOctree.cpp \
-                            PointOctreeCreator.cpp \
+                            TempOctree.cpp \
                             LidarOctreeCreator.cpp \
+                            PointAccumulator.cpp \
                             LidarPreprocessor.cpp
 
 $(BINDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
@@ -99,6 +99,17 @@ $(BINDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarPreprocessor
 LidarPreprocessor: $(BINDIR)/LidarPreprocessor
 
+LIDARILLUMINATOR_SOURCES = LidarProcessOctree.cpp \
+                           NormalCalculator.cpp \
+                           LidarIlluminator.cpp
+
+$(BINDIR)/LidarIlluminator: $(LIDARILLUMINATOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: LidarIlluminator
+LidarIlluminator: $(BINDIR)/LidarIlluminator
+
 LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       LidarTool.cpp \
                       PlanePrimitive.cpp \
@@ -106,7 +117,7 @@ LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       PointPrimitive.cpp \
                       SpherePrimitive.cpp \
                       CylinderPrimitive.cpp \
-                      ArcInfoExportFile.cpp \
+                      PointBasedLightingShader.cpp \
                       LidarViewer.cpp
 
 $(BINDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
@@ -116,18 +127,11 @@ $(BINDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarViewer
 LidarViewer: $(BINDIR)/LidarViewer
 
-$(BINDIR)/PrintPrimitiveFile: $(OBJDIR)/PrintPrimitiveFile.o
-	@mkdir -p $(BINDIR)
-	@echo Linking $@...
-	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
-.PHONY: PrintPrimitiveFile
-PrintPrimitiveFile: $(BINDIR)/PrintPrimitiveFile
-
 install: $(ALL)
 	@echo Installing LiDAR Viewer in $(INSTALLDIR)...
 	@install -d $(INSTALLDIR)
 	@install -d $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarPreprocessor $(INSTALLDIR)/bin
+	@install $(BINDIR)/LidarIlluminator $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarViewer $(INSTALLDIR)/bin
-	@install $(BINDIR)/PrintPrimitiveFile $(INSTALLDIR)/bin
 

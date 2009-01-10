@@ -25,10 +25,10 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "SplitPoints.h"
 
-unsigned int splitPoints(OctreePoint* points,unsigned int numPoints,int dimension,float split)
+size_t splitPoints(LidarPoint* points,size_t numPoints,int dimension,Scalar split)
 	{
-	unsigned int l=0;
-	unsigned int r=numPoints;
+	size_t l=0;
+	size_t r=numPoints;
 	while(l<r)
 		{
 		/* All points <l are <split: */

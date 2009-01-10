@@ -1,6 +1,6 @@
 ========================================================================
-README for LiDAR Viewer version 1.3
-Copyright (c) 2004-2008 Oliver Kreylos
+README for LiDAR Viewer version 2.0
+Copyright (c) 2004-2009 Oliver Kreylos
 ========================================================================
 
 Overview
@@ -18,12 +18,26 @@ about LiDAR Viewer can be found at http://www.keckcaves.org.
 LiDAR Viewer's development was supported by the University of
 California, Davis, by the UC Davis W.M. Keck Center for Active
 Visualization in the Earth Sciences (KeckCAVES,
-http://www.keckcaves.org), and the W.M Keck Foundation.
+http://www.keckcaves.org), and the W.M. Keck Foundation.
+
+Description
+===========
+
+LiDAR Viewer consists of three components. LidarPreprocessor takes raw
+point cloud data from one or more input files in a variety of file
+formats and converts them to LiDAR Viewer's internal hierarchical
+representation. LidarIlluminator reads a pre-processed point cloud file
+and calculates a local best-fitting plane for each point. The normal
+vectors of these planes are stored in an additional file, and are used
+by LiDAR Viewer for real-time point-based illumination. LidarViewer is
+the viewer itself; it reads a pre-processed and optionally illuminated
+point cloud file and renders arbitrary views of the data at interactive
+rates.
 
 Requirements
 ============
 
-LiDAR Viewer requires Vrui version 1.0 build 053 or newer.
+LiDAR Viewer requires Vrui version 1.0 build 055 or newer.
 
 Installation Guide
 ==================
@@ -43,12 +57,12 @@ accounts.
 
 1. Change into ~/src directory and unpack the LiDAR Viewer tarball:
    > cd ~/src
-   > tar xfz <download path>/LidarViewer-1.3.tar.gz
+   > tar xfz <download path>/LidarViewer-2.0.tar.gz
    - or -
-   > tar xf <download path>/LidarViewer-1.3.tar
+   > tar xf <download path>/LidarViewer-2.0.tar
 
 2. Change into LiDAR Viewer base directory:
-   > cd LidarViewer-1.3
+   > cd LidarViewer-2.0
 
 3. Adapt makefile if Vrui installation path is *not* ~/Vrui-1.0 by
    setting the VRUIDIR variable to the correct location. VRUIDIR is
@@ -63,8 +77,10 @@ accounts.
 
 5. Build LiDAR Viewer:
    > make
-   This creates two executables in ./bin: The LiDAR data preprocessor,
-   LidarPreprocessor, and the LiDAR data viewer, LidarViewer.
+   This creates three executables in ./bin: The LiDAR data
+   preprocessor, LidarPreprocessor, the processor to calculate lighting
+   data, LidarIlluminator, and the LiDAR data viewer itself,
+   LidarViewer.
 
 6. Optional: Install LiDAR Viewer in the selected target location.
    This is only necessary if the INSTALLDIR variable in the makefile
@@ -75,15 +91,15 @@ accounts.
    > sudo make install
 
 7. Optional: Add directory containing the LiDAR Viewer executables
-   (~/src/LidarViewer-1.3/bin in the default installation,
+   (~/src/LidarViewer-2.0/bin in the default installation,
    $(INSTALLDIR)/bin otherwise) to the user's search path. This allows
    running LiDAR Viewer from any directory. Using csh or tcsh:
-   > setenv PATH ${PATH}:~/src/LidarViewer-1.3/bin
+   > setenv PATH ${PATH}:~/src/LidarViewer-2.0/bin
    - or -
    > setenv PATH ${PATH}:<INSTALLDIR>/bin
    where <INSTALLDIR> is the target location set in the makefile.
    Using bash:
-   > export PATH=${PATH}:~/src/LidarViewer-1.3/bin
+   > export PATH=${PATH}:~/src/LidarViewer-2.0/bin
    - or -
    > export PATH=${PATH}:<INSTALLDIR>/bin
    These lines can also be added to the user's .cshrc or .bashrc files

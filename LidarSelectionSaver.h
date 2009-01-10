@@ -27,7 +27,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdio.h>
 #include <Misc/File.h>
 
-#include "LidarOctreeFile.h"
+#include "LidarTypes.h"
 #include "LidarOctree.h"
 
 class LidarSelectionSaver
@@ -35,11 +35,11 @@ class LidarSelectionSaver
 	/* Elements: */
 	private:
 	Misc::File selectionFile; // The file to save the selected points to
-	LidarOctree::Vector pointOffset; // Offset vector from octree coordinates to real coordinates
+	Vector pointOffset; // Offset vector from octree coordinates to real coordinates
 	
 	/* Constructors and destructors: */
 	public:
-	LidarSelectionSaver(const char* selectionFileName,const LidarOctree::Vector& sPointOffset)
+	LidarSelectionSaver(const char* selectionFileName,const Vector& sPointOffset)
 		:selectionFile(selectionFileName,"wt"),
 		 pointOffset(sPointOffset)
 		{

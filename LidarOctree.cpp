@@ -20,8 +20,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
-#define PARANOIA 0
-
 #include <string.h>
 #include <string>
 #include <iostream>
@@ -46,6 +44,58 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 Methods of class LidarOctree::Node:
 **********************************/
 
+LidarOctree::Node::~Node(void)
+	{
+	/* Delete point array: */
+	if(haveNormals)
+		delete[] reinterpret_cast<NVertex*>(points);
+	else
+		delete[] reinterpret_cast<Vertex*>(points);
+	
+	/* Delete selected point flag mask: */
+	delete[] selectedPoints;
+	delete[] selectedPointColors;
+	
+	/* Delete children: */
+	delete[] children;
+	}
+
+namespace {
+
+/***************
+Helper function:
+***************/
+
+template <class VertexParam>
+inline
+Scalar
+intersectRayWithPoints(
+	const LidarOctree::Ray& ray,
+	Scalar lambdaMin,
+	Scalar coneAngle2,
+	const VertexParam* points,
+	unsigned int numPoints)
+	{
+	/* Intersect the ray with all points in this node: */
+	for(unsigned int i=0;i<numPoints;++i)
+		{
+		/* Check if the point is closer than the previous one and inside the cone: */
+		Vector sp;
+		for(int j=0;j<3;++j)
+			sp[j]=points[i].position[j]-ray.getOrigin()[j];
+		Scalar x=sp*ray.getDirection();
+		if(x>Scalar(0)&&x<lambdaMin)
+			{
+			Scalar y2=Geometry::sqr(Geometry::cross(sp,ray.getDirection()));
+			if(y2/Math::sqr(x)<=coneAngle2)
+				lambdaMin=x;
+			}
+		}
+	return lambdaMin;
+	}
+
+}
+
 Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAngle2,Scalar lambda1,Scalar lambda2) const
 	{
 	if(children!=0)
@@ -54,14 +104,17 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 		Scalar lambdaMin=lambda2;
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
-			/* Make a box for the child's domain: */
-			Vector domainSize(children[childIndex].size);
-			Geometry::Box<Scalar,3> domain(children[childIndex].center-domainSize,children[childIndex].center+domainSize);
-			std::pair<Scalar,Scalar> lambdas=domain.getRayParameters(ray);
+			/* Convert the child's domain into a box: */
+			Geometry::Box<Scalar,3> childDomainBox(children[childIndex].domain.getMin(),children[childIndex].domain.getMax());
+			
+			/* Intersect the ray with the child's domain: */
+			std::pair<Scalar,Scalar> lambdas=childDomainBox.getRayParameters(ray);
 			if(lambdas.first<lambda1)
 				lambdas.first=lambda1;
 			if(lambdas.second>lambda2)
 				lambdas.second=lambda2;
+			
+			/* Recurse into the child if the ray intersects its domain: */
 			if(lambdas.first<lambdas.second)
 				{
 				Scalar lambda=children[childIndex].intersectRay(ray,coneAngle2,lambdas.first,lambdas.second);
@@ -76,18 +129,19 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 		Scalar planeLambdas[3];
 		for(int i=0;i<3;++i)
 			{
-			if(ray.getOrigin()[i]>=center[i])
+			Scalar center=domain.getCenter(i);
+			if(ray.getOrigin()[i]>=center)
 				{
 				childIndex|=0x1<<i;
 				if(ray.getDirection()[i]<Scalar(0))
-					planeLambdas[i]=(center[i]-ray.getOrigin()[i])/ray.getDirection()[i];
+					planeLambdas[i]=(center-ray.getOrigin()[i])/ray.getDirection()[i];
 				else
 					planeLambdas[i]=Scalar(-1);
 				}
 			else
 				{
 				if(ray.getDirection()[i]>Scalar(0))
-					planeLambdas[i]=(center[i]-ray.getOrigin()[i])/ray.getDirection()[i];
+					planeLambdas[i]=(center-ray.getOrigin()[i])/ray.getDirection()[i];
 				else
 					planeLambdas[i]=Scalar(-1);
 				}
@@ -125,22 +179,10 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 	else
 		{
 		/* Intersect the ray with all points in this node: */
-		Scalar lambdaMin=lambda2;
-		for(unsigned int i=0;i<numPoints;++i)
-			{
-			/* Check if the point is closer than the previous one and inside the cone: */
-			Vector sp;
-			for(int j=0;j<3;++j)
-				sp[j]=points[i].position[j]-ray.getOrigin()[j];
-			Scalar x=sp*ray.getDirection();
-			if(x>Scalar(0)&&x<lambdaMin)
-				{
-				Scalar y2=Geometry::sqr(Geometry::cross(sp,ray.getDirection()));
-				if(y2/Math::sqr(x)<=coneAngle2)
-					lambdaMin=x;
-				}
-			}
-		return lambdaMin;
+		if(haveNormals)
+			return intersectRayWithPoints(ray,lambda2,coneAngle2,reinterpret_cast<const NVertex*>(points),numPoints);
+		else
+			return intersectRayWithPoints(ray,lambda2,coneAngle2,reinterpret_cast<const Vertex*>(points),numPoints);
 		}
 	}
 
@@ -225,14 +267,9 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		const Frustum::Plane::Vector& normal=frustum.getFrustumPlane(plane).getNormal();
 		
 		/* Find the point on the node's bounding box which is closest to the frustum plane: */
-		Point p=node->center;
+		Point p;
 		for(int i=0;i<3;++i)
-			{
-			if(normal[i]>Scalar(0))
-				p[i]+=node->size;
-			else
-				p[i]-=node->size;
-			}
+			p[i]=normal[i]>Scalar(0)?node->domain.getMax()[i]:node->domain.getMin()[i];
 		
 		/* Check if the point is inside the view frustum: */
 		inside=!frustum.getFrustumPlane(plane).contains(p);
@@ -243,14 +280,15 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		return;
 	
 	/* Calculate the node's projected detail size: */
-	Scalar projectedDetailSize=frustum.calcProjectedRadius(node->center,node->detailSize);
+	Point nodeCenter=node->domain.getCenter();
+	Scalar projectedDetailSize=frustum.calcProjectedRadius(nodeCenter,node->detailSize);
 	if(projectedDetailSize>=Scalar(0))
 		{
 		/* Adjust the projected detail size based on the focus+context rule: */
 		if(fncWeight>Scalar(0))
 			{
 			/* Calculate the distance from the node to the focus region: */
-			Scalar fncDist=Geometry::dist(node->center,fncCenter)-node->radius;
+			Scalar fncDist=Geometry::dist(nodeCenter,fncCenter)-node->radius;
 			if(fncDist>fncRadius)
 				{
 				/* Adjust the node's projected detail size: */
@@ -297,11 +335,11 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		{
 		if(node->children!=0)
 			{
-			/* Use the view point for a back-to-front traversal of the child nodes: */
+			/* Use the view point for a view-ordered traversal of the child nodes: */
 			int childIndex=0x0;
 			Point eye=frustum.getEye().toPoint();
 			for(int i=0;i<3;++i)
-				if(eye[i]>=node->center[i])
+				if(eye[i]>=nodeCenter[i])
 					childIndex|=0x1<<i;
 			
 			/* Render the node's children: */
@@ -312,7 +350,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			/* Done here... */
 			return;
 			}
-		else if(node->childrenOffset!=Misc::LargeFile::Offset(0))
+		else if(node->childrenOffset!=LidarFile::Offset(0))
 			{
 			/* Try inserting this node into the node loader thread's request queue: */
 			Threads::Mutex::Lock loadRequestLock(loadRequestMutex);
@@ -358,7 +396,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			}
 		}
 	
-	/* Retrieve the cache slot containing this node's tile vertex array and image: */
+	/* Retrieve the cache slot containing this node's vertex array: */
 	GLuint vertexBufferObjectId=0;
 	DataItem::CacheSlot* slot=0;
 	bool mustUploadData=false;
@@ -415,7 +453,10 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			vertexBufferObjectId=slot->vertexBufferObjectId;
 			glBindBufferARB(GL_ARRAY_BUFFER_ARB,vertexBufferObjectId);
 			if(mustUploadData)
-				glBufferDataARB(GL_ARRAY_BUFFER_ARB,node->numPoints*sizeof(Vertex),node->points,GL_DYNAMIC_DRAW_ARB);
+				{
+				size_t arraySize=node->numPoints*(node->haveNormals?sizeof(NVertex):sizeof(Vertex));
+				glBufferDataARB(GL_ARRAY_BUFFER_ARB,arraySize,node->points,GL_DYNAMIC_DRAW_ARB);
+				}
 			}
 		
 		/* Mark the cache slot as used and move it to the end of the LRU list: */
@@ -441,7 +482,8 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			{
 			vertexBufferObjectId=dataItem->bypassVertexBufferObjectId;
 			glBindBufferARB(GL_ARRAY_BUFFER_ARB,vertexBufferObjectId);
-			glBufferDataARB(GL_ARRAY_BUFFER_ARB,node->numPoints*sizeof(Vertex),node->points,GL_STREAM_DRAW_ARB);
+			size_t arraySize=node->numPoints*(node->haveNormals?sizeof(NVertex):sizeof(Vertex));
+			glBufferDataARB(GL_ARRAY_BUFFER_ARB,arraySize,node->points,GL_STREAM_DRAW_ARB);
 			}
 		dataItem->numBypassedPoints+=node->numPoints;
 		}
@@ -450,37 +492,42 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 	if(vertexBufferObjectId!=0)
 		{
 		/* Render from the vertex buffer: */
-		glVertexPointer(static_cast<const Vertex*>(0));
+		if(node->haveNormals)
+			glVertexPointer(static_cast<const NVertex*>(0));
+		else
+			glVertexPointer(static_cast<const Vertex*>(0));
 		}
 	else
 		{
 		/* Render straight from the node vertex array (only happens if GL_ARB_vertex_buffer_object not supported): */
-		glVertexPointer(node->points);
+		if(node->haveNormals)
+			glVertexPointer(reinterpret_cast<const NVertex*>(node->points));
+		else
+			glVertexPointer(reinterpret_cast<const Vertex*>(node->points));
 		}
 	glDrawArrays(GL_POINTS,0,node->numPoints);
 	
 	#if 0
-	float s=float(node->size);
 	glColor3f(1.0f,0.0f,0.0f);
 	glBegin(GL_LINE_STRIP);
-	glVertex3f(node->center[0]-s,node->center[1]-s,node->center[2]-s);
-	glVertex3f(node->center[0]+s,node->center[1]-s,node->center[2]-s);
-	glVertex3f(node->center[0]+s,node->center[1]+s,node->center[2]-s);
-	glVertex3f(node->center[0]-s,node->center[1]+s,node->center[2]-s);
-	glVertex3f(node->center[0]-s,node->center[1]-s,node->center[2]-s);
-	glVertex3f(node->center[0]-s,node->center[1]-s,node->center[2]+s);
-	glVertex3f(node->center[0]+s,node->center[1]-s,node->center[2]+s);
-	glVertex3f(node->center[0]+s,node->center[1]+s,node->center[2]+s);
-	glVertex3f(node->center[0]-s,node->center[1]+s,node->center[2]+s);
-	glVertex3f(node->center[0]-s,node->center[1]-s,node->center[2]+s);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMin()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMin()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMax()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMax()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMin()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMin()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMin()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMax()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMax()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMin()[1],node->domain.getMax()[2]);
 	glEnd();
 	glBegin(GL_LINES);
-	glVertex3f(node->center[0]+s,node->center[1]-s,node->center[2]-s);
-	glVertex3f(node->center[0]+s,node->center[1]-s,node->center[2]+s);
-	glVertex3f(node->center[0]+s,node->center[1]+s,node->center[2]-s);
-	glVertex3f(node->center[0]+s,node->center[1]+s,node->center[2]+s);
-	glVertex3f(node->center[0]-s,node->center[1]+s,node->center[2]-s);
-	glVertex3f(node->center[0]-s,node->center[1]+s,node->center[2]+s);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMin()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMin()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMax()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMax()[0],node->domain.getMax()[1],node->domain.getMax()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMax()[1],node->domain.getMin()[2]);
+	glVertex3f(node->domain.getMin()[0],node->domain.getMax()[1],node->domain.getMax()[2]);
 	glEnd();
 	#endif
 	
@@ -495,8 +542,8 @@ void LidarOctree::interactWithSubTree(LidarOctree::Node* node,const LidarOctree:
 		return;
 	
 	/* Calculate the node's distance from the interactor: */
-	Scalar interactorDist2=Geometry::sqrDist(interactor.center,node->center);
-	if(interactorDist2>=Math::sqr(interactor.radius+node->radius))
+	Scalar interactorDist2=node->domain.sqrDist(interactor.center);
+	if(interactorDist2>=Math::sqr(interactor.radius))
 		return;
 	
 	/* Calculate an appropriate LOD value for the node: */
@@ -537,7 +584,7 @@ void LidarOctree::interactWithSubTree(LidarOctree::Node* node,const LidarOctree:
 	if(node->children==0)
 		{
 		/* Subdivide if the node is not a leaf: */
-		if(node->childrenOffset!=Misc::LargeFile::Offset(0))
+		if(node->childrenOffset!=LidarFile::Offset(0))
 			{
 			/* Try inserting this node into the node loader thread's request queue: */
 			Threads::Mutex::Lock loadRequestLock(loadRequestMutex);
@@ -588,67 +635,20 @@ void LidarOctree::interactWithSubTree(LidarOctree::Node* node,const LidarOctree:
 		for(int i=0;i<8;++i)
 			interactWithSubTree(&node->children[i],interactor);
 		}
-	
 	}
 
 void LidarOctree::selectPoints(LidarOctree::Node* node,const LidarOctree::Interactor& interactor)
 	{
 	/* Check if the interactor's region of influence intersects the node's domain: */
-	Scalar dist2=Scalar(0);
-	for(int i=0;i<3;++i)
-		{
-		Scalar d;
-		if((d=interactor.center[i]-(node->center[i]+node->size))>Scalar(0))
-			dist2+=Math::sqr(d);
-		else if((d=interactor.center[i]-(node->center[i]-node->size))<Scalar(0))
-			dist2+=Math::sqr(d);
-		}
+	Scalar dist2=node->domain.sqrDist(interactor.center);
 	Scalar ir2=Math::sqr(interactor.radius);
 	if(dist2<ir2)
 		{
-		/* Select all points inside the interactor's region of influence in this node: */
-		bool pointsChanged=false;
-		for(unsigned int i=0;i<node->numPoints;++i)
-			{
-			Scalar pdist2=Geometry::sqrDist(interactor.center,Point(node->points[i].position.getXyzw()));
-			if(pdist2<ir2)
-				{
-				/* Create a selection mask if there is none already: */
-				if(node->selectedPoints==0)
-					{
-					node->selectedPoints=new bool[maxNumPointsPerNode];
-					for(unsigned int i=0;i<node->numPoints;++i)
-						node->selectedPoints[i]=false;
-					node->selectedPointColors=new Color[maxNumPointsPerNode];
-					}
-				
-				/* Select this point: */
-				if(!node->selectedPoints[i])
-					{
-					node->selectedPoints[i]=true;
-					Color& col=node->points[i].color;
-					node->selectedPointColors[i]=col;
-					float intensity=float(col[0])*0.299f+float(col[1])*0.587f+float(col[2])*0.114f;
-					if(intensity<127.5f)
-						{
-						col[0]=GLubyte(0);
-						col[1]=GLubyte(intensity+127.5f);
-						col[2]=GLubyte(0);
-						}
-					else
-						{
-						col[0]=GLubyte(intensity-127.5f);
-						col[1]=GLubyte(255);
-						col[2]=GLubyte(intensity-127.5f);
-						}
-					pointsChanged=true;
-					}
-				}
-			}
-		
-		/* Check if the points array has to be invalidated: */
-		if(pointsChanged)
-			++node->pointsVersion;
+		/* Select points in this node: */
+		if(node->haveNormals)
+			selectPointsInNode<NVertex>(node,interactor);
+		else
+			selectPointsInNode<Vertex>(node,interactor);
 		
 		if(node->children!=0)
 			{
@@ -662,52 +662,15 @@ void LidarOctree::selectPoints(LidarOctree::Node* node,const LidarOctree::Intera
 void LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Interactor& interactor)
 	{
 	/* Check if the interactor's region of influence intersects the node's domain: */
-	Scalar dist2=Scalar(0);
-	for(int i=0;i<3;++i)
-		{
-		Scalar d;
-		if((d=interactor.center[i]-(node->center[i]+node->size))>Scalar(0))
-			dist2+=Math::sqr(d);
-		else if((d=interactor.center[i]-(node->center[i]-node->size))<Scalar(0))
-			dist2+=Math::sqr(d);
-		}
+	Scalar dist2=node->domain.sqrDist(interactor.center);
 	Scalar ir2=Math::sqr(interactor.radius);
-	if(dist2<ir2)
+	if(dist2<ir2&&node->selectedPoints!=0)
 		{
-		if(node->selectedPoints!=0)
-			{
-			/* Deselect all points inside the interactor's region of influence in this node: */
-			bool pointsChanged=false;
-			bool hasSelectedPoints=false;
-			for(unsigned int i=0;i<node->numPoints;++i)
-				{
-				Scalar pdist2=Geometry::sqrDist(interactor.center,Point(node->points[i].position.getXyzw()));
-				if(pdist2<ir2)
-					{
-					/* Deselect this point: */
-					if(node->selectedPoints[i])
-						{
-						node->selectedPoints[i]=false;
-						node->points[i].color=node->selectedPointColors[i];
-						pointsChanged=true;
-						}
-					}
-				hasSelectedPoints=hasSelectedPoints||node->selectedPoints[i];
-				}
-			
-			/* Destroy the selection mask if there are no selected points: */
-			if(!hasSelectedPoints)
-				{
-				delete[] node->selectedPoints;
-				node->selectedPoints=0;
-				delete[] node->selectedPointColors;
-				node->selectedPointColors=0;
-				}
-			
-			/* Check if the points array has to be invalidated: */
-			if(pointsChanged)
-				++node->pointsVersion;
-			}
+		/* Deselect points in this node: */
+		if(node->haveNormals)
+			deselectPointsInNode<NVertex>(node,interactor);
+		else
+			deselectPointsInNode<Vertex>(node,interactor);
 		
 		if(node->children!=0)
 			{
@@ -724,13 +687,30 @@ void LidarOctree::clearSelection(LidarOctree::Node* node)
 		{
 		/* Deselect all selected points: */
 		bool pointsChanged=false;
-		for(unsigned int i=0;i<node->numPoints;++i)
+		if(node->haveNormals)
 			{
-			if(node->selectedPoints[i])
+			NVertex* points=reinterpret_cast<NVertex*>(node->points);
+			for(unsigned int i=0;i<node->numPoints;++i)
 				{
-				GLubyte intensity=node->selectedPoints[i];
-				node->points[i].color=node->selectedPointColors[i];
-				pointsChanged=true;
+				if(node->selectedPoints[i])
+					{
+					GLubyte intensity=node->selectedPoints[i];
+					points[i].color=node->selectedPointColors[i];
+					pointsChanged=true;
+					}
+				}
+			}
+		else
+			{
+			Vertex* points=reinterpret_cast<Vertex*>(node->points);
+			for(unsigned int i=0;i<node->numPoints;++i)
+				{
+				if(node->selectedPoints[i])
+					{
+					GLubyte intensity=node->selectedPoints[i];
+					points[i].color=node->selectedPointColors[i];
+					pointsChanged=true;
+					}
 				}
 			}
 		
@@ -755,33 +735,78 @@ void LidarOctree::clearSelection(LidarOctree::Node* node)
 
 void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 	{
-	/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
-	node->points=new Vertex[maxNumPointsPerNode];
-	
-	/* Load the node's points into a temporary point buffer: */
-	LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
-	pointsFile.seekSet(node->pointsOffset);
-	pointsFile.read(pointsBuffer,node->numPoints);
-	
-	/* Convert the LiDAR points to render points: */
-	for(unsigned int i=0;i<node->numPoints;++i)
+	if(node->haveNormals)
 		{
-		/* Copy the point color: */
-		node->points[i].color=pointsBuffer[i].value;
+		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
+		NVertex* points=new NVertex[maxNumPointsPerNode];
+		node->points=points;
 		
-		#if RECENTER_OCTREE
-		/* Offset the points so that the root node's center is the origin: */
-		for(int j=0;j<3;++j)
-			node->points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]-dataCenter[j]);
-		#else
-		/* Copy the points: */
-		for(int j=0;j<3;++j)
-			node->points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]);
-		#endif
+		/* Load the node's points into a temporary point buffer: */
+		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
+		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
+		pointsFile.read(pointsBuffer,node->numPoints);
+		Vector* normalsBuffer=new Vector[maxNumPointsPerNode];
+		normalsFile->seekSet(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
+		normalsFile->read(normalsBuffer,node->numPoints);
+		
+		/* Convert the LiDAR points to render points: */
+		for(unsigned int i=0;i<node->numPoints;++i)
+			{
+			/* Copy the point color: */
+			for(int j=0;j<4;++j)
+				points[i].color[j]=pointsBuffer[i].value[j];
+			
+			/* Copy the normal vector: */
+			for(int j=0;j<3;++j)
+				points[i].normal[j]=NVertex::Normal::Scalar(normalsBuffer[i][j]);
+			
+			#if RECENTER_OCTREE
+			/* Offset the points so that the root node's center is the origin: */
+			for(int j=0;j<3;++j)
+				points[i].position[j]=NVertex::Position::Scalar(pointsBuffer[i][j]-pointOffset[j]);
+			#else
+			/* Copy the points: */
+			for(int j=0;j<3;++j)
+				points[i].position[j]=NVertex::Position::Scalar(pointsBuffer[i][j]);
+			#endif
+			}
+		
+		/* Clean up: */
+		delete[] pointsBuffer;
+		delete[] normalsBuffer;
 		}
-	
-	/* Clean up: */
-	delete[] pointsBuffer;
+	else
+		{
+		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
+		Vertex* points=new Vertex[maxNumPointsPerNode];
+		node->points=points;
+		
+		/* Load the node's points into a temporary point buffer: */
+		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
+		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
+		pointsFile.read(pointsBuffer,node->numPoints);
+		
+		/* Convert the LiDAR points to render points: */
+		for(unsigned int i=0;i<node->numPoints;++i)
+			{
+			/* Copy the point color: */
+			for(int j=0;j<4;++j)
+				points[i].color[j]=pointsBuffer[i].value[j];
+			
+			#if RECENTER_OCTREE
+			/* Offset the points so that the root node's center is the origin: */
+			for(int j=0;j<3;++j)
+				points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]-pointOffset[j]);
+			#else
+			/* Copy the points: */
+			for(int j=0;j<3;++j)
+				points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]);
+			#endif
+			}
+		
+		/* Clean up: */
+		delete[] pointsBuffer;
+		}
 	}
 
 void* LidarOctree::nodeLoaderThreadMethod(void)
@@ -812,23 +837,18 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 		
 		/* Create the node's children: */
 		Node* children=new Node[8];
-		octreeFile.seekSet(node->childrenOffset);
+		indexFile.seekSet(node->childrenOffset);
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			LidarOctreeFileNode ofn;
-			ofn.read(octreeFile);
+			ofn.read(indexFile);
 			children[childIndex].parent=node;
 			children[childIndex].childrenOffset=ofn.childrenOffset;
-			children[childIndex].center=node->center;
-			children[childIndex].size=Math::div2(node->size);
-			for(int i=0;i<3;++i)
-				if(childIndex&(1<<i))
-					children[childIndex].center[i]+=children[childIndex].size;
-				else
-					children[childIndex].center[i]-=children[childIndex].size;
+			children[childIndex].domain=Cube(node->domain,childIndex);
 			children[childIndex].radius=Math::div2(node->radius);
 			children[childIndex].numPoints=ofn.numPoints;
-			children[childIndex].pointsOffset=ofn.pointsOffset;
+			children[childIndex].haveNormals=node->haveNormals;
+			children[childIndex].dataOffset=ofn.dataOffset;
 			children[childIndex].detailSize=ofn.detailSize;
 			children[childIndex].subdivisionQueueIndex=subdivisionRequestQueueLength;
 			}
@@ -856,55 +876,24 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 
 namespace {
 
-/************************************************************
-Helper functions to load octree files given a base file name:
-************************************************************/
+/***********************************************************
+Helper functions to load LiDAR files given a base file name:
+***********************************************************/
 
-const char* getBaseNameExtension(const char* baseFileName)
+std::string getLidarPartFileName(const char* lidarFileName,const char* partFileName)
 	{
-	/* Extract the base file name's extension: */
-	const char* extPtr=0;
-	const char* bfnPtr;
-	for(bfnPtr=baseFileName;*bfnPtr!='\0';++bfnPtr)
-		if(*bfnPtr=='.')
-			extPtr=bfnPtr;
-	if(extPtr==0)
-		extPtr=bfnPtr;
-	
-	/* Check if this is the extension we're looking for: */
-	if(strcasecmp(extPtr,".o")!=0&&strcasecmp(extPtr,".oct")!=0&&strcasecmp(extPtr,".obin")!=0)
-		extPtr=bfnPtr;
-	
-	return extPtr;
-	}
-
-std::string createOctreeFileName(const char* baseFileName)
-	{
-	/* Copy the given base name without extension: */
-	std::string result=std::string(baseFileName,getBaseNameExtension(baseFileName));
-	
-	/* Append the proper extension: */
-	result.append(".oct");
-	
-	return result;
-	}
-
-std::string createPointsFileName(const char* baseFileName)
-	{
-	/* Copy the given base name without extension: */
-	std::string result=std::string(baseFileName,getBaseNameExtension(baseFileName));
-	
-	/* Append the proper extension: */
-	result.append(".obin");
-	
+	std::string result=lidarFileName;
+	result.push_back('/');
+	result.append(partFileName);
 	return result;
 	}
 
 }
 
-LidarOctree::LidarOctree(const char* octreeFileName,unsigned int sCacheSize,unsigned int sGlCacheSize)
-	:octreeFile(createOctreeFileName(octreeFileName).c_str(),"rb",Misc::LargeFile::LittleEndian),
-	 pointsFile(createPointsFileName(octreeFileName).c_str(),"rb",Misc::LargeFile::LittleEndian),
+LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize)
+	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
+	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
+	 normalsFile(0),
 	 maxRenderLOD(Math::sqrt(Scalar(2))),
 	 fncWeight(0),
 	 numCachedNodes(0),
@@ -913,16 +902,39 @@ LidarOctree::LidarOctree(const char* octreeFileName,unsigned int sCacheSize,unsi
 	 subdivisionRequestQueueLength(4),subdivisionRequestQueue(new SubdivisionRequest[subdivisionRequestQueueLength]),
 	 coarseningHeap(0)
 	{
+	/* Check if there is a normal vector file: */
+	try
+		{
+		normalsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Normals").c_str(),"rb",LidarFile::LittleEndian);
+		}
+	catch(std::runtime_error err)
+		{
+		}
+	
 	/* Read the octree file header: */
-	LidarOctreeFileHeader ofh;
-	ofh.read(octreeFile);
+	LidarOctreeFileHeader ofh(indexFile);
+	
+	/* Initialize the root node's domain: */
+	#if RECENTER_OCTREE
+	pointOffset=ofh.domain.getCenter()-Point::origin;
+	root.domain=Cube(ofh.domain.getMin()-pointOffset,ofh.domain.getMax()-pointOffset);
+	#else
+	pointOffset=Vector::zero;
+	root.domain=ofh.domain;
+	#endif
+	Scalar rootRadius2=Scalar(0);
+	for(int i=0;i<3;++i)
+		rootRadius2+=Math::sqr(root.domain.getMax()[i]-root.domain.getMin()[i]);
+	root.radius=Math::div2(Math::sqrt(rootRadius2));
 	
 	/* Initialize the tree structure: */
 	maxNumPointsPerNode=ofh.maxNumPointsPerNode;
+	root.haveNormals=normalsFile!=0;
 	
 	/* Calculate the memory and GPU cache sizes: */
-	size_t memNodeSize=sizeof(Node)+maxNumPointsPerNode*sizeof(Vertex);
-	size_t glNodeSize=maxNumPointsPerNode*sizeof(Vertex);
+	size_t vertexSize=root.haveNormals?sizeof(NVertex):sizeof(Vertex);
+	size_t memNodeSize=sizeof(Node)+maxNumPointsPerNode*vertexSize;
+	size_t glNodeSize=maxNumPointsPerNode*vertexSize;
 	cacheSize=sCacheSize/memNodeSize;
 	if(cacheSize==0)
 		Misc::throwStdErr("LidarOctree::LidarOctree: Specified memory cache size too small");
@@ -933,24 +945,23 @@ LidarOctree::LidarOctree(const char* octreeFileName,unsigned int sCacheSize,unsi
 	
 	/* Read the root node's structure: */
 	LidarOctreeFileNode rootfn;
-	rootfn.read(octreeFile);
+	rootfn.read(indexFile);
 	root.childrenOffset=rootfn.childrenOffset;
-	
-	/* Initialize the root node's domain: */
-	#if RECENTER_OCTREE
-	dataCenter=ofh.center;
-	root.center=Point::origin;
-	#else
-	dataCenter=Point::origin;
-	root.center=ofh.center;
-	#endif
-	root.size=ofh.radius;
-	root.radius=root.size*Math::sqrt(Scalar(3));
-	
 	root.numPoints=rootfn.numPoints;
-	root.pointsOffset=rootfn.pointsOffset;
+	root.dataOffset=rootfn.dataOffset;
 	root.detailSize=rootfn.detailSize;
 	root.subdivisionQueueIndex=subdivisionRequestQueueLength;
+	
+	/* Read the point file's header: */
+	LidarDataFileHeader dfh(pointsFile);
+	pointsRecordSize=LidarFile::Offset(dfh.recordSize);
+	
+	if(root.haveNormals)
+		{
+		/* Read the normal file's header: */
+		LidarDataFileHeader dfh(*normalsFile);
+		normalsRecordSize=LidarFile::Offset(dfh.recordSize);
+		}
 	
 	/* Load the root's point data: */
 	loadNodePoints(&root);
@@ -977,6 +988,9 @@ LidarOctree::~LidarOctree(void)
 	
 	/* Delete the subdivision request queue: */
 	delete[] subdivisionRequestQueue;
+	
+	/* Delete the optional normals file: */
+	delete normalsFile;
 	}
 
 void LidarOctree::initContext(GLContextData& contextData) const
@@ -984,6 +998,23 @@ void LidarOctree::initContext(GLContextData& contextData) const
 	/* Create a context data item: */
 	DataItem* dataItem=new DataItem(glCacheSize);
 	contextData.addDataItem(this,dataItem);
+	}
+
+Point LidarOctree::getDomainCenter(void) const
+	{
+	return root.domain.getCenter();
+	}
+
+Scalar LidarOctree::getDomainRadius(void) const
+	{
+	#if 1
+	return root.radius;
+	#else
+	Scalar radius2=Scalar(0);
+	for(int i=0;i<3;++i)
+		radius2+=Math::sqr(root.domain.getMax()[i]-root.domain.getMin()[i]);
+	return Math::div2(Math::sqrt(radius2));
+	#endif
 	}
 
 void LidarOctree::setTreeUpdateFunction(LidarOctree::TreeUpdateFunction newTreeUpdateFunction,void* newTreeUpdateFunctionArg)
@@ -1013,12 +1044,6 @@ void LidarOctree::setFocusAndContext(const Point& newFncCenter,Scalar newFncRadi
 
 void LidarOctree::startRenderPass(void)
 	{
-	#if PARANOIA
-	/* Check the coarsening heap: */
-	if(!coarseningHeap->checkHeap())
-		std::cerr<<"Inconsistent coarsening heap!"<<std::endl;
-	#endif
-	
 	{
 	/* Process all nodes recently loaded by the node loader thread: */
 	Threads::Mutex::Lock readyNodesLock(readyNodesMutex);
@@ -1032,15 +1057,6 @@ void LidarOctree::startRenderPass(void)
 			{
 			/* Get the best coarsening candidate: */
 			Node* coarsenNode=coarseningHeap->getTopNode();
-			
-			#if PARANOIA
-			/* Check if this is a recipe for disaster: */
-			bool disaster=false;
-			for(int childIndex=0;childIndex<8&&!disaster;++childIndex)
-				disaster=coarsenNode->children[childIndex].children!=0||coarsenNode->children[childIndex].subdivisionQueueIndex<subdivisionRequestQueueLength;
-			if(disaster)
-				std::cerr<<"Disaster!"<<std::endl;
-			#endif
 			
 			if(coarsenNode!=0&&coarsenNode!=node->parent)
 				{
@@ -1126,7 +1142,10 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextDa
 	DataItem* dataItem=contextData.retrieveDataItem<DataItem>(this);
 	
 	/* Set up OpenGL state: */
-	GLVertexArrayParts::enable(Vertex::getPartsMask());
+	if(root.haveNormals)
+		GLVertexArrayParts::enable(NVertex::getPartsMask());
+	else
+		GLVertexArrayParts::enable(Vertex::getPartsMask());
 	#if 0
 	if(dataItem->hasPointParametersExtension)
 		{
@@ -1153,7 +1172,10 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextDa
 	#endif
 	if(dataItem->hasVertexBufferObjectExtension)
 		glBindBufferARB(GL_ARRAY_BUFFER_ARB,0);
-	GLVertexArrayParts::disable(Vertex::getPartsMask());
+	if(root.haveNormals)
+		GLVertexArrayParts::disable(NVertex::getPartsMask());
+	else
+		GLVertexArrayParts::disable(Vertex::getPartsMask());
 	
 	/* Print performance counters: */
 	// std::cout<<dataItem->numRenderedNodes<<", "<<dataItem->numCacheMisses<<", "<<dataItem->numCacheBypasses<<", "<<dataItem->numRenderedPoints<<", "<<dataItem->numBypassedPoints<<std::endl;
@@ -1161,22 +1183,21 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextDa
 
 Scalar LidarOctree::intersectRay(const LidarOctree::Ray& ray,Scalar coneAngle) const
 	{
-	/* Intersect the ray with the root domain to compute bounds on the ray parameter: */
-	Vector rootSize(root.size);
-	Geometry::Box<Scalar,3> rootDomain(root.center-rootSize,root.center+rootSize);
-	std::pair<Scalar,Scalar> rayInterval=rootDomain.getRayParameters(ray);
-	Scalar lambda1=rayInterval.first;
-	if(lambda1<Scalar(0))
-		lambda1=Scalar(0);
-	Scalar lambda2=rayInterval.second;
+	/* Convert the root's domain into a box: */
+	Geometry::Box<Scalar,3> rootDomainBox(root.domain.getMin(),root.domain.getMax());
+	
+	/* Intersect the ray with the root's domain: */
+	std::pair<Scalar,Scalar> lambdas=rootDomainBox.getRayParameters(ray);
+	if(lambdas.first<Scalar(0))
+		lambdas.first=Scalar(0);
 	
 	/* Bail out if the ray misses the domain entirely: */
-	if(lambda1>=lambda2)
+	if(lambdas.first>=lambdas.second)
 		return Scalar(-1);
 	
 	/* Recursively intersect the ray with all nodes: */
-	Scalar lambda=root.intersectRay(ray,Math::sqr(coneAngle),lambda1,lambda2);
-	if(lambda<lambda2)
+	Scalar lambda=root.intersectRay(ray,Math::sqr(coneAngle),lambdas.first,lambdas.second);
+	if(lambda<lambdas.second)
 		return lambda;
 	else
 		return Scalar(-1);

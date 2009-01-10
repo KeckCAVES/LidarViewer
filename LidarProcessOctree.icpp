@@ -1,0 +1,274 @@
+/***********************************************************************
+LidarProcessOctree - Class to process multiresolution LiDAR point sets.
+Copyright (c) 2008 Oliver Kreylos
+
+This file is part of the LiDAR processing and analysis package.
+
+The LiDAR processing and analysis package is free software; you can
+redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation; either
+version 2 of the License, or (at your option) any later version.
+
+The LiDAR processing and analysis package is distributed in the hope
+that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with the LiDAR processing and analysis package; if not, write to the
+Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+02111-1307 USA
+***********************************************************************/
+
+#define LIDARPROCESSOCTREE_IMPLEMENTATION
+
+#include "LidarProcessOctree.h"
+
+/***********************************
+Methods of class LidarProcessOctree:
+***********************************/
+
+template <class NodeProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processNodesPrefix(
+	typename LidarProcessOctree::Node& node,
+	unsigned int nodeLevel,
+	NodeProcessFunctorParam& processFunctor)
+	{
+	/* Lock the node: */
+	++node.processCounter;
+	
+	/* Process the node: */
+	processFunctor(node,nodeLevel);
+	
+	/* Check if the node is an interior node: */
+	if(node.childrenOffset!=0)
+		{
+		/* Subdivide the node if necessary: */
+		if(node.children==0)
+			subdivide(node);
+		
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processNodesPrefix(node.children[childIndex],nodeLevel+1,processFunctor);
+		}
+	
+	/* Unlock the node: */
+	--node.processCounter;
+	}
+
+template <class NodeProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processNodesPostfix(
+	typename LidarProcessOctree::Node& node,
+	unsigned int nodeLevel,
+	NodeProcessFunctorParam& processFunctor)
+	{
+	/* Lock the node: */
+	++node.processCounter;
+	
+	/* Check if the node is an interior node: */
+	if(node.childrenOffset!=0)
+		{
+		/* Subdivide the node if necessary: */
+		if(node.children==0)
+			subdivide(node);
+		
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processNodesPostfix(node.children[childIndex],nodeLevel+1,processFunctor);
+		}
+	
+	/* Process the node: */
+	processFunctor(node,nodeLevel);
+	
+	/* Unlock the node: */
+	--node.processCounter;
+	}
+
+template <class ProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processPoints(
+	typename LidarProcessOctree::Node& node,
+	ProcessFunctorParam& processFunctor)
+	{
+	/* Lock the node: */
+	++node.processCounter;
+	
+	/* Check if the node is a leaf node: */
+	if(node.childrenOffset==0)
+		{
+		/* Process all points in the node: */
+		for(unsigned int i=0;i<node.numPoints;++i)
+			processFunctor(node.points[i]);
+		}
+	else
+		{
+		/* Subdivide the node if necessary: */
+		if(node.children==0)
+			subdivide(node);
+		
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processPoints(node.children[childIndex],processFunctor);
+		}
+	
+	/* Unlock the node: */
+	--node.processCounter;
+	}
+
+template <class DirectedProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processPointsDirectedKdtree(
+	const LidarPoint* points,
+	unsigned int left,
+	unsigned int right,
+	unsigned int splitDimension,
+	DirectedProcessFunctorParam& processFunctor)
+	{
+	/* Calculate the index of this node: */
+	unsigned int mid=(left+right)>>1;
+	
+	unsigned int childSplitDimension=splitDimension+1;
+	if(childSplitDimension==3)
+		childSplitDimension=0;
+	
+	/* Traverse into child closer to query point: */
+	if(processFunctor.getQueryPoint()[splitDimension]<points[mid][splitDimension])
+		{
+		/* Traverse left child: */
+		if(left<mid)
+			processPointsDirectedKdtree(points,left,mid-1,childSplitDimension,processFunctor);
+		
+		/* Process the point: */
+		processFunctor(points[mid]);
+		
+		/* Traverse right child: */
+		if(right>mid&&Math::sqr(processFunctor.getQueryPoint()[splitDimension]-points[mid][splitDimension])<=processFunctor.getQueryRadius2())
+			processPointsDirectedKdtree(points,mid+1,right,childSplitDimension,processFunctor);
+		}
+	else
+		{
+		/* Traverse right child: */
+		if(right>mid)
+			processPointsDirectedKdtree(points,mid+1,right,childSplitDimension,processFunctor);
+		
+		/* Process the point: */
+		processFunctor(points[mid]);
+		
+		/* Traverse left child: */
+		if(left<mid&&Math::sqr(processFunctor.getQueryPoint()[splitDimension]-points[mid][splitDimension])<=processFunctor.getQueryRadius2())
+			processPointsDirectedKdtree(points,left,mid-1,childSplitDimension,processFunctor);
+		}
+	}
+
+template <class DirectedProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processPointsDirectedOctree(
+	typename LidarProcessOctree::Node& node,
+	DirectedProcessFunctorParam& processFunctor)
+	{
+	/* Lock the node: */
+	++node.processCounter;
+	
+	/* Check if the node is a leaf node: */
+	if(node.childrenOffset==0)
+		{
+		/* Process all points in the node: */
+		if(node.numPoints>0)
+			processPointsDirectedKdtree(node.points,0,node.numPoints-1,0,processFunctor);
+		}
+	else
+		{
+		/* Subdivide the node if necessary: */
+		if(node.children==0)
+			subdivide(node);
+		
+		/*****************************************************************
+		The following code is quite dense. The first loop finds the index
+		of the child node that contains the query point, and the second
+		loop traverses the child nodes in order of increasing distance
+		from the query point by using bit index magic with XOR. The
+		distance calculation only adds up distances along those axes where
+		the query point and the child node are on different sides of the
+		node's splitting planes. As a result, it calculates the actual
+		(squared) Minkowski distance from the node's domain to the query
+		point. It is recommended to make a diagram and work through the
+		code to actually understand what happens here.
+		*****************************************************************/
+		
+		#if OPTIMIZED_TRAVERSAL
+		/* Find child node containing query point: */
+		int queryChildIndex=0x0;
+		Scalar dist2s[3];
+		for(int i=0;i<3;++i)
+			{
+			Scalar dist=processFunctor.getQueryPoint()[i]-node.domain.getCenter(i);
+			if(dist>=Scalar(0))
+				queryChildIndex|=0x1<<i;
+			dist2s[i]=Math::sqr(dist);
+			}
+		
+		/* Calculate the traversal order: */
+		int traversalOrder=0;
+		if(dist2s[0]<=dist2s[1])
+			{
+			if(dist2s[1]<=dist2s[2])
+				traversalOrder=0;
+			else if(dist2s[0]<=dist2s[2])
+				traversalOrder=1;
+			else
+				traversalOrder=4;
+			}
+		else
+			{
+			if(dist2s[1]>dist2s[2])
+				traversalOrder=5;
+			else if(dist2s[0]>dist2s[2])
+				traversalOrder=3;
+			else
+				traversalOrder=2;
+			}
+		
+		/* Recurse into the node's children: */
+		static const int childOrders[6][8]=
+			{
+			{0,1,2,3,4,5,6,7}, // Flip x, then y, then z
+			{0,1,4,5,2,3,6,7}, // Flip x, then z, then y
+			{0,2,1,3,4,6,5,7}, // Flip y, then x, then z
+			{0,2,4,6,1,3,5,7}, // Flip y, then z, then x
+			{0,4,1,5,2,6,3,7}, // Flip z, then x, then y
+			{0,4,2,6,1,5,3,7}, // Flip z, then y, then x
+			};
+		#else
+		/* Find child node containing query point: */
+		int queryChildIndex=0x0;
+		for(int i=0;i<3;++i)
+			if(processFunctor.getQueryPoint()[i]>=node.domain.getCenter(i))
+				queryChildIndex|=0x1<<i;
+		#endif
+		
+		for(int ci=0;ci<8;++ci)
+			{
+			/* Get the index of the child node actually entered: */
+			#if OPTIMIZED_TRAVERSAL
+			int childIndex=childOrders[traversalOrder][ci];
+			#else
+			int childIndex=ci;
+			#endif
+			Node& child=node.children[childIndex^queryChildIndex];
+			
+			/* Enter the child node if it overlaps the query sphere: */
+			if(child.domain.sqrDist(processFunctor.getQueryPoint())<processFunctor.getQueryRadius2())
+				processPointsDirectedOctree(child,processFunctor);
+			}
+		}
+	
+	/* Unlock the node: */
+	--node.processCounter;
+	}

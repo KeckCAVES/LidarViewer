@@ -1,0 +1,156 @@
+/***********************************************************************
+LidarOctree - Class to render multiresolution LiDAR point sets.
+Copyright (c) 2005-2008 Oliver Kreylos
+
+This file is part of the LiDAR processing and analysis package.
+
+The LiDAR processing and analysis package is free software; you can
+redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation; either
+version 2 of the License, or (at your option) any later version.
+
+The LiDAR processing and analysis package is distributed in the hope
+that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with the LiDAR processing and analysis package; if not, write to the
+Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+02111-1307 USA
+***********************************************************************/
+
+#define LIDAROCTREE_IMPLEMENTATION
+
+#include "LidarOctree.h"
+
+/****************************
+Methods of class LidarOctree:
+****************************/
+
+template <class VertexParam>
+inline
+void
+LidarOctree::selectPointsInNode(
+	LidarOctree::Node* node,
+	const LidarOctree::Interactor& interactor)
+	{
+	/* Select all points inside the interactor's region of influence in this node: */
+	bool pointsChanged=false;
+	VertexParam* points=reinterpret_cast<VertexParam*>(node->points);
+	Scalar ir2=Math::sqr(interactor.radius);
+	for(unsigned int i=0;i<node->numPoints;++i)
+		{
+		Scalar pdist2=Geometry::sqrDist(interactor.center,Point(points[i].position.getXyzw()));
+		if(pdist2<ir2)
+			{
+			/* Create a selection mask if there is none already: */
+			if(node->selectedPoints==0)
+				{
+				node->selectedPoints=new bool[maxNumPointsPerNode];
+				for(unsigned int i=0;i<node->numPoints;++i)
+					node->selectedPoints[i]=false;
+				node->selectedPointColors=new Vertex::Color[maxNumPointsPerNode];
+				}
+			
+			/* Select this point: */
+			if(!node->selectedPoints[i])
+				{
+				node->selectedPoints[i]=true;
+				Vertex::Color& col=points[i].color;
+				node->selectedPointColors[i]=col;
+				float intensity=float(col[0])*0.299f+float(col[1])*0.587f+float(col[2])*0.114f;
+				if(intensity<127.5f)
+					{
+					col[0]=GLubyte(0);
+					col[1]=GLubyte(intensity+127.5f);
+					col[2]=GLubyte(0);
+					}
+				else
+					{
+					col[0]=GLubyte(intensity-127.5f);
+					col[1]=GLubyte(255);
+					col[2]=GLubyte(intensity-127.5f);
+					}
+				pointsChanged=true;
+				}
+			}
+		}
+	
+	/* Check if the points array has to be invalidated: */
+	if(pointsChanged)
+		++node->pointsVersion;
+	}
+
+template <class VertexParam>
+inline
+void
+LidarOctree::deselectPointsInNode(
+	LidarOctree::Node* node,
+	const LidarOctree::Interactor& interactor)
+	{
+	/* Deselect all points inside the interactor's region of influence in this node: */
+	bool pointsChanged=false;
+	bool hasSelectedPoints=false;
+	VertexParam* points=reinterpret_cast<VertexParam*>(node->points);
+	Scalar ir2=Math::sqr(interactor.radius);
+	for(unsigned int i=0;i<node->numPoints;++i)
+		{
+		Scalar pdist2=Geometry::sqrDist(interactor.center,Point(points[i].position.getXyzw()));
+		if(pdist2<ir2)
+			{
+			/* Deselect this point: */
+			if(node->selectedPoints[i])
+				{
+				node->selectedPoints[i]=false;
+				points[i].color=node->selectedPointColors[i];
+				pointsChanged=true;
+				}
+			}
+		hasSelectedPoints=hasSelectedPoints||node->selectedPoints[i];
+		}
+	
+	/* Destroy the selection mask if there are no selected points: */
+	if(!hasSelectedPoints)
+		{
+		delete[] node->selectedPoints;
+		node->selectedPoints=0;
+		delete[] node->selectedPointColors;
+		node->selectedPointColors=0;
+		}
+	
+	/* Check if the points array has to be invalidated: */
+	if(pointsChanged)
+		++node->pointsVersion;
+	}
+
+template <class VertexParam,class PointProcessorParam>
+inline
+void
+LidarOctree::processSelectedPoints(
+	const LidarOctree::Node* node,
+	PointProcessorParam& pp) const
+	{
+	if(node->children!=0)
+		{
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processSelectedPoints<VertexParam,PointProcessorParam>(&node->children[childIndex],pp);
+		}
+	else if(node->selectedPoints!=0)
+		{
+		/* Process all selected points in this node: */
+		const VertexParam* points=reinterpret_cast<const VertexParam*>(node->points);
+		for(unsigned int i=0;i<node->numPoints;++i)
+			if(node->selectedPoints[i])
+				{
+				/* Process the point's original LiDAR value: */
+				LidarPoint lp;
+				for(int j=0;j<3;++j)
+					lp[j]=points[i].position[j];
+				for(int j=0;j<4;++j)
+					lp.value[j]=node->selectedPointColors[i][j];
+				pp(lp);
+				}
+		};
+	}

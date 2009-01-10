@@ -1,6 +1,6 @@
 /***********************************************************************
-TempPointOctree - Class to store points in a temporary octree for
-out-of-core preprocessing of large point clouds.
+TempOctree - Class to store points in a temporary octree for out-of-core
+preprocessing of large point clouds.
 Copyright (c) 2007-2008 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
@@ -21,25 +21,31 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
-#ifndef TEMPPOINTOCTREE_INCLUDED
-#define TEMPPOINTOCTREE_INCLUDED
+#ifndef TEMPOCTREE_INCLUDED
+#define TEMPOCTREE_INCLUDED
 
 #include <vector>
+#include <Misc/LargeFile.h>
 
-#include "PointOctreeFile.h"
+#include "LidarTypes.h"
 #include "Cube.h"
 
-class TempPointOctree
+class TempOctree
 	{
 	/* Embedded classes: */
+	public:
+	typedef std::vector<LidarPoint> LidarPointList; // Type for lists of LiDAR points
 	private:
+	typedef Misc::LargeFile File; // Type representing temporary octree files
+	typedef File::Offset Offset; // Type for offsets in temporary octree files
+	
 	struct Node // Node of the temporary octree
 		{
 		/* Elements: */
 		public:
 		Cube domain; // Node's domain
-		unsigned int numPoints; // Total number of points contained in the node's subtree
-		FileOffset pointsOffset; // Offset of node's points in temporary octree file if node is a leaf (0 for interior nodes)
+		size_t numPoints; // Total number of points contained in the node's subtree
+		Offset pointsOffset; // Offset of node's points in temporary octree file if node is a leaf (0 for interior nodes)
 		Node* children; // Pointer to array of eight children if node is interior (0 for leaf nodes)
 		
 		/* Constructors and destructors: */
@@ -53,31 +59,28 @@ class TempPointOctree
 			};
 		
 		/* Methods: */
-		unsigned int estimateNumPointsInCube(const Cube& cube) const;
-		unsigned int boundNumPointsInCube(const Cube& cube) const;
+		size_t estimateNumPointsInCube(const Cube& cube) const;
+		size_t boundNumPointsInCube(const Cube& cube) const;
 		};
 	
 	/* Elements: */
 	char* tempFileName; // Name of the temporary octree file
-	PointOctreeFile file; // Handle of temporary octree file
+	File file; // Handle of temporary octree file
 	unsigned int maxNumPointsPerNode; // The maximum number of points that can be stored in each leaf node
 	Box pointBbox; // Bounding box containing all points in this octree
 	Node root; // Root of the temporary octree
 	
 	/* Private methods: */
-	void createSubTree(Node& node,OctreePoint* points,unsigned int numPoints);
-	void loadSubTree(Node& node,PointOctreeFile& octFile,FileOffset nodeOffset);
-	void getPointsInCube(Node& node,const Cube& cube,std::vector<OctreePoint>& points);
-	static const char* getObinFileName(const char* octreeFileNameStem);
+	void createSubTree(Node& node,LidarPoint* points,size_t numPoints);
+	void getPointsInCube(Node& node,const Cube& cube,LidarPointList& points);
 	
 	/* Constructors and destructors: */
 	public:
-	TempPointOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,OctreePoint* points,unsigned int numPoints); // Creates a temporary octree for the given array of points; shuffles point array in the process
-	TempPointOctree(const char* octreeFileNameStem,bool newOctreeFileFormat); // Creates a temporary octree from an existing LiDAR octree file pair
-	~TempPointOctree(void);
+	TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,LidarPoint* points,size_t numPoints); // Creates a temporary octree for the given array of points; shuffles point array in the process
+	~TempOctree(void);
 	
 	/* Methods: */
-	unsigned int getTotalNumPoints(void) const // Returns the total number of points in this octree
+	size_t getTotalNumPoints(void) const // Returns the total number of points in this octree
 		{
 		return root.numPoints;
 		};
@@ -85,15 +88,15 @@ class TempPointOctree
 		{
 		return pointBbox;
 		};
-	unsigned int estimateNumPointsInCube(const Cube& cube) const // Gives a lower limit on the number of points contained in the given cube
+	size_t estimateNumPointsInCube(const Cube& cube) const // Returns a lower bound on the number of points contained in the given cube
 		{
 		return root.estimateNumPointsInCube(cube);
 		};
-	unsigned int boundNumPointsInCube(const Cube& cube) const // Returns an upper bound on the number of points contained in the given cube
+	size_t boundNumPointsInCube(const Cube& cube) const // Returns an upper bound on the number of points contained in the given cube
 		{
 		return root.boundNumPointsInCube(cube);
 		};
-	void getPointsInCube(const Cube& cube,std::vector<OctreePoint>& points) // Returns exactly the points contained in the given cube
+	void getPointsInCube(const Cube& cube,LidarPointList& points) // Returns exactly the points contained in the given cube
 		{
 		getPointsInCube(root,cube,points);
 		};

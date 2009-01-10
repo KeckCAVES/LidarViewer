@@ -24,8 +24,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #ifndef SPLITPOINTS_INCLUDED
 #define SPLITPOINTS_INCLUDED
 
-#include "PointOctreeFile.h"
+#include "LidarTypes.h"
 
-unsigned int splitPoints(OctreePoint* points,unsigned int numPoints,int dimension,float split);
+size_t splitPoints(LidarPoint* points,size_t numPoints,int dimension,Scalar split);
 
 #endif

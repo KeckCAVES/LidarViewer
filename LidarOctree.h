@@ -28,15 +28,17 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Threads/Mutex.h>
 #include <Threads/Cond.h>
 #include <Threads/Thread.h>
-#include <Geometry/Vector.h>
 #include <GL/gl.h>
 #include <GL/GLColor.h>
+#define NONSTANDARD_GLVERTEX_TEMPLATES
 #include <GL/GLVertex.h>
 #include <GL/GLObject.h>
 
-#include "LidarOctreeFile.h"
+#include "LidarTypes.h"
+#include "Cube.h"
+#include "LidarFile.h"
 
-// Flag whether to shift the center of the octree's domain to the coordinate system's origin
+/* Flag whether to shift the center of the octree's domain to the coordinate system's origin: */
 #define RECENTER_OCTREE 1
 
 /* Forward declarations: */
@@ -53,7 +55,6 @@ class LidarOctree:public GLObject
 	{
 	/* Embedded classes: */
 	public:
-	typedef Geometry::Vector<Scalar,3> Vector; // Type for vectors
 	typedef void (*TreeUpdateFunction)(void*); // Type for callback functions when image tree changes asynchronously
 	
 	struct Interactor // Structure describing the influence of an interaction tool on the octree
@@ -67,7 +68,7 @@ class LidarOctree:public GLObject
 		Interactor(const Point& sCenter,const Scalar sRadius)
 			:center(sCenter),radius(sRadius)
 			{
-			};
+			}
 		};
 	
 	typedef std::vector<Interactor> InteractorList; // Type for lists of interactors
@@ -77,24 +78,25 @@ class LidarOctree:public GLObject
 	private:
 	typedef GLColor<GLubyte,4> Color; // Type for point colors
 	typedef GLVertex<void,0,GLubyte,4,void,float,3> Vertex; // Type for rendered points
+	typedef GLVertex<void,0,GLubyte,4,float,float,3> NVertex; // Type for rendered points with normal vectors
 	
 	struct Node // Structure for Octree nodes
 		{
 		/* Elements: */
 		public:
 		Node* parent; // Pointer to parent of this node (0 for root)
-		Misc::LargeFile::Offset childrenOffset; // Offset of the node's children in the octree file (0 if node is leaf node)
+		LidarFile::Offset childrenOffset; // Offset of the node's children in the octree file (0 if node is leaf node)
 		Node* children; // Pointer to an array of eight child nodes (0 if node is not subdivided)
-		Point center; // Center point of this node's domain
-		Scalar size; // Half side length of this node's domain
-		Scalar radius; // Radius of a sphere containing this node's domain
+		Cube domain; // This node's domain
+		Scalar radius; // This node's radius
 		unsigned int numPoints; // Number of LiDAR points belonging to this node
-		Misc::LargeFile::Offset pointsOffset; // Offset of point data in the points file
+		bool haveNormals; // Flag whether the node's points have normal vectors associated with them
+		LidarFile::Offset dataOffset; // Offset of node's data in the LiDAR data file(s)
 		Scalar detailSize; // Detail size of this node, for proper LOD computation
-		Vertex* points; // Pointer to the LiDAR points belonging to this node
+		void* points; // Pointer to the LiDAR points belonging to this node
 		unsigned int pointsVersion; // Version counter for points array to invalidate render cache on changes
 		bool* selectedPoints; // Array holding flags for selected points
-		Color* selectedPointColors; //Array holding the original colors of selected points
+		Vertex::Color* selectedPointColors; // Array holding the original colors of selected points
 		
 		/* State touched during rendering traversals: */
 		mutable Threads::Mutex nodeMutex; // Mutex protecting node state touched during rendering traversal
@@ -112,22 +114,11 @@ class LidarOctree:public GLObject
 			 subdivisionQueueIndex(~0x0U-1),
 			 coarseningHeapIndex(~0x0U)
 			{
-			};
-		~Node(void) // Destroys a node and its subtree
-			{
-			/* Delete point array: */
-			delete[] points;
-			
-			/* Delete selected point flag mask: */
-			delete[] selectedPoints;
-			delete[] selectedPointColors;
-			
-			/* Delete children: */
-			delete[] children;
-			};
+			}
+		~Node(void); // Destroys a node and its subtree
 		
 		/* Methods: */
-		Scalar intersectRay(const Ray& ray,Scalar coneAngle2,Scalar lambda1,Scalar lambda2) const;
+		Scalar intersectRay(const Ray& ray,Scalar coneAngle2,Scalar lambda1,Scalar lambda2) const; // Recursively intersects a ray with this node's subtree
 		};
 	
 	struct SubdivisionRequest // Structure to store subdivision request for nodes
@@ -141,7 +132,7 @@ class LidarOctree:public GLObject
 		SubdivisionRequest(void)
 			:node(0),LOD(0.0f)
 			{
-			};
+			}
 		};
 	
 	struct DataItem:public GLObject::DataItem
@@ -164,7 +155,7 @@ class LidarOctree:public GLObject
 				:vertexBufferObjectId(0),node(0),version(0),
 				lastUsed(0),pred(0),succ(0)
 				{
-				};
+				}
 			};
 		
 		typedef Misc::HashTable<const Node*,CacheSlot*> NodeHasher; // Hash table to map from nodes to the cache slots containing their points
@@ -190,10 +181,13 @@ class LidarOctree:public GLObject
 		};
 	
 	/* Elements: */
-	Misc::LargeFile octreeFile; // The file containing the octree's structural data
-	Misc::LargeFile pointsFile; // The file containing the octree's point data
+	LidarFile indexFile; // The file containing the octree's structural data
+	LidarFile pointsFile; // The file containing the octree's point data
+	LidarFile::Offset pointsRecordSize; // Record size of points file
+	LidarFile* normalsFile; // Pointer to an optional file containing normal vectors for each point
+	LidarFile::Offset normalsRecordSize; // Record size of normals file
 	unsigned int maxNumPointsPerNode; // Maximum number of points per node
-	Point dataCenter; // True center of the LiDAR point set
+	Vector pointOffset; // Offset from original LiDAR point positions to re-centered point positions
 	Node root; // The octree's root node (offset to center around the origin)
 	Scalar maxRenderLOD; // Maximum LOD value at which a node will be rendered
 	Point fncCenter; // Center point of focus region
@@ -221,55 +215,34 @@ class LidarOctree:public GLObject
 	/* Private methods: */
 	void renderSubTree(const Node* node,const Frustum& frustum,DataItem* dataItem) const;
 	void interactWithSubTree(Node* node,const Interactor& interactor); // Prepares a subtree for interaction with an interactor
+	template <class VertexParam>
+	void selectPointsInNode(Node* node,const Interactor& interactor); // Selects points in the given node
 	void selectPoints(Node* node,const Interactor& interactor); // Selects points in the given subtree
+	template <class VertexParam>
+	void deselectPointsInNode(Node* node,const Interactor& interactor); // Deselects points in the given node
 	void deselectPoints(Node* node,const Interactor& interactor); // Deselects points in the given subtree
 	void clearSelection(Node* node); // Clears selected points in the given subtree
-	template <class PointProcessorParam>
-	void processSelectedPoints(const Node* node,PointProcessorParam& pp) const // Processes points in the given subtree
-		{
-		if(node->children!=0)
-			{
-			/* Recurse into the node's children: */
-			for(int childIndex=0;childIndex<8;++childIndex)
-				processSelectedPoints(&node->children[childIndex],pp);
-			}
-		//else if(node->childrenOffset==Misc::LargeFile::Offset(0)&&node->selectedPoints!=0) // Only process finest-resolution nodes
-		else if(node->selectedPoints!=0)
-			{
-			/* Process all selected points in this node: */
-			for(unsigned int i=0;i<node->numPoints;++i)
-				if(node->selectedPoints[i])
-					{
-					/* Process the point's original LiDAR value: */
-					pp(LidarPoint(Point(node->points[i].position.getXyzw()),node->selectedPointColors[i]));
-					}
-			};
-		};
+	template <class VertexParam,class PointProcessorParam>
+	void processSelectedPoints(const Node* node,PointProcessorParam& pp) const; // Processes points in the given subtree
 	void loadNodePoints(Node* node); // Loads the point array of the given node
 	void* nodeLoaderThreadMethod(void); // Thread method to subdivide octree nodes without interrupting rendering
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctree(const char* octreeFileName,unsigned int sCacheSize,unsigned int sGlCacheSize); // Creates octree from the given octree file; cache sizes are in bytes
+	LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize); // Creates octree from the given LiDAR file; cache sizes are in bytes
 	virtual ~LidarOctree(void);
 	
 	/* Methods: */
 	virtual void initContext(GLContextData& contextData) const;
-	const Point& getDomainCenter(void) const // Returns the center of the octree's domain
+	bool hasNormalVectors(void) const // Returns true if the octree has normal vectors for each point
 		{
-		return root.center;
-		};
-	Scalar getDomainRadius(void) const // Returns the radius of the octree's domain
+		return root.haveNormals;
+		}
+	Point getDomainCenter(void) const; // Returns the center of the octree's domain
+	Scalar getDomainRadius(void) const; // Returns the radius of the octree's domain
+	const Vector& getPointOffset(void) const // Returns an offset vector to transform LiDAR octree coordinates to source point coordinates
 		{
-		return root.radius;
-		};
-	Vector getPointOffset(void) const // Returns an offset vector to transform LiDAR octree coordinates to source point coordinates
-		{
-		#if RECENTER_OCTREE
-		return dataCenter-Point::origin;
-		#else
-		return Vector::zero;
-		#endif
+		return pointOffset;
 		};
 	void setTreeUpdateFunction(TreeUpdateFunction newTreeUpdateFunction,void* newTreeUpdateFunctionArg);
 	void setRenderQuality(Scalar qualityLevel); // Sets the quality level for rendering, 0 is normal quality
@@ -285,8 +258,15 @@ class LidarOctree:public GLObject
 	void processSelectedPoints(PointProcessorParam& pp) const // Processes the set of selected points in leaf nodes with the given point processor
 		{
 		/* Process nodes from the root: */
-		processSelectedPoints(&root,pp);
+		if(root.haveNormals)
+			processSelectedPoints<NVertex,PointProcessorParam>(&root,pp);
+		else
+			processSelectedPoints<Vertex,PointProcessorParam>(&root,pp);
 		};
 	};
+
+#ifndef LIDAROCTREE_IMPLEMENTATION
+#include "LidarOctree.icpp"
+#endif
 
 #endif

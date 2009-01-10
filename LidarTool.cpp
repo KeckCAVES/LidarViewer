@@ -29,6 +29,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Vrui/InputGraphManager.h>
 #include <Vrui/Vrui.h>
 
+#include "LidarTypes.h"
 #include "LidarOctree.h"
 
 #include "LidarTool.h"
@@ -147,7 +148,7 @@ void LidarTool::frame(void)
 	else
 		{
 		/* Move the device in the plane it currently inhabits: */
-		lambda=(deviceRay.getDirection()*LidarOctree::Vector(transformedDevice->getPosition()-iDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
+		lambda=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-iDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
 		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(lambda));
 		transformedDevice->setTransformation(ts);
 		}

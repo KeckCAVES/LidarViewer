@@ -37,7 +37,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Vrui/Vrui.h>
 #include <Vrui/Application.h>
 
-#include "LidarOctreeFile.h"
+#include "LidarTypes.h"
+#include "PointBasedLightingShader.h"
 
 /* Forward declarations: */
 namespace Comm {
@@ -51,10 +52,10 @@ class TextField;
 }
 namespace Vrui {
 class InputDevice;
+class Lightsource;
 }
 class LidarOctree;
 class Primitive;
-class ArcInfoExportFile;
 
 class LidarViewer:public Vrui::Application,public GLObject
 	{
@@ -131,6 +132,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 		public:
 		GLuint influenceSphereDisplayListId; // ID of display list to render transparent spheres
 		GLuint planeColorMapTextureId; // Texture object ID of texture plane color map
+		PointBasedLightingShader pbls; // Shader for point-based lighting
 		
 		/* Constructors and destructors: */
 		DataItem(void);
@@ -141,10 +143,15 @@ class LidarViewer:public Vrui::Application,public GLObject
 	
 	/* Elements: */
 	LidarOctree* octree; // The LiDAR data representation
-	std::vector<ArcInfoExportFile*> arcInfoExportFiles; // List of additional GIS data files to show alongside the point cloud
 	Scalar renderQuality; // The current rendering quality (adapted to achieve optimal frame rate)
 	Scalar fncWeight; // Weight factor for focus+context LOD adjustment
 	float pointSize; // The pixel size used to render LiDAR points
+	bool pointBasedLighting; // Flag whether points are rendered with illumination
+	bool usePointColors; // Flag whether to use points' colors during illuminated rendering
+	bool enableSun; // Flag whether to use a sun light source instead of all viewer's headlights
+	bool* viewerHeadlightStates; // Enable states of all viewers' headlights at the last time the sun light source was turned on
+	Vrui::Scalar sunAzimuth,sunElevation; // Azimuth and elevation angles of sun light source in degrees
+	Vrui::Lightsource* sun; // Light source representing the sun
 	bool useTexturePlane; // Flag whether to use automatically generated texture coordinates to visualize point distance from a plane
 	GPlane texturePlane; // Plane equation of the texture-generating plane
 	double texturePlaneScale; // Scale factor for texture plane distances
@@ -163,6 +170,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	
 	/* Vrui state: */
 	GLMotif::PopupMenu* mainMenu; // The program's main menu
+	GLMotif::RadioBox* mainMenuSelectorModes;
 	GLMotif::PopupWindow* renderDialog; // The rendering settings dialog
 	GLMotif::TextField* renderQualityValue;
 	GLMotif::Slider* renderQualitySlider;
@@ -170,9 +178,14 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::Slider* fncWeightSlider;
 	GLMotif::TextField* pointSizeValue;
 	GLMotif::Slider* pointSizeSlider;
+	GLMotif::TextField* sunAzimuthValue;
+	GLMotif::Slider* sunAzimuthSlider;
+	GLMotif::TextField* sunElevationValue;
+	GLMotif::Slider* sunElevationSlider;
 	GLMotif::TextField* texturePlaneScaleValue;
 	GLMotif::Slider* texturePlaneScaleSlider;
 	GLMotif::PopupWindow* interactionDialog; // The interaction settings dialog
+	GLMotif::RadioBox* interactionDialogSelectorModes;
 	GLMotif::TextField* brushSizeValue;
 	GLMotif::Slider* brushSizeSlider;
 	
@@ -180,7 +193,6 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::Popup* createSelectorModesMenu(void);
 	GLMotif::Popup* createSelectionMenu(void);
 	GLMotif::Popup* createExtractionMenu(void);
-	GLMotif::Popup* createViewMenu(void);
 	GLMotif::Popup* createDialogMenu(void);
 	GLMotif::PopupMenu* createMainMenu(void);
 	GLMotif::PopupWindow* createRenderDialog(void);
@@ -194,6 +206,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void selectPrimitive(int primitiveIndex); // Selects the given primitive
 	void deselectPrimitive(int primitiveIndex); // Deselects the given primitive
 	void deletePrimitive(int primitiveIndex); // Deletes the given primitive from the list
+	void updateSun(void); // Updates the state of the sun light source
 	
 	/* Constructors and destructors: */
 	public:
@@ -222,13 +235,16 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void renderQualitySliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
 	void fncWeightSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
 	void pointSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void usePointColorsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void enableSunCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void sunAzimuthSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void sunElevationSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
 	void enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void texturePlaneScaleSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
 	void showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
-	void loadViewpointCallback(Misc::CallbackData* cbData);
-	void saveViewpointCallback(Misc::CallbackData* cbData);
 	void updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	};
 

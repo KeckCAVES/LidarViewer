@@ -37,3 +37,19 @@ LiDAR Viewer 1.3:
   The virtual input device can then be combined with other tools such
   as LocatorTools for selection, DraggingTools to select primitives, or
   a ComeHitherNavigationTool to navigate to the intersection point.
+
+LiDAR Viewer 2.0:
+- Complete re-implementation.
+- Changed LiDAR data file format from .oct/.obin file pairs to
+  directory-based format with Index, Point, and optional additional
+  files.
+- Streamlined LiDAR preprocessor's input file formats. Now supports
+  several binary files, including the LAS exchange file format, and
+  a generic reader for space- or comma-separated ASCII files.
+- Created framework for octree-based out-of-core LiDAR data processing.
+- Created LiDAR illumination program to calculate normal vectors for
+  each LiDAR point based on local least-squares approximation for real-
+  time illumination during viewing.
+- LiDAR viewer can now do real-time point-based lighting with arbitrary
+  numbers of OpenGL light sources when loading LiDAR files with pre-
+  calculated point normal vectors.
