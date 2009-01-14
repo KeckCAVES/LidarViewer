@@ -405,7 +405,7 @@ void PointBasedLightingShader::compileShader(void)
 			normalEc=normalize(gl_NormalMatrix*gl_Normal);\n\
 			\n\
 			/* Let the normal vector always point towards the eye: */\n\
-			if(dot(normalEc,vertexEc)>0.0)\n\
+			if(dot(normalEc,vertexEc.xyz)>0.0)\n\
 				normalEc=-normalEc;\n\
 			\n";
 	

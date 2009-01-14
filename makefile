@@ -71,7 +71,8 @@ $(OBJDIR)/%.o: %.cpp
 # Rule to build all LiDAR Viewer components:
 ALL = $(BINDIR)/LidarPreprocessor \
       $(BINDIR)/LidarIlluminator \
-      $(BINDIR)/LidarViewer
+      $(BINDIR)/LidarViewer \
+      $(BINDIR)/PrintPrimitiveFile
 .PHONY: all
 all: $(ALL)
 
@@ -127,6 +128,13 @@ $(BINDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarViewer
 LidarViewer: $(BINDIR)/LidarViewer
 
+$(BINDIR)/PrintPrimitiveFile: $(OBJDIR)/PrintPrimitiveFile.o
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: PrintPrimitiveFile
+PrintPrimitiveFile: $(BINDIR)/PrintPrimitiveFile
+
 install: $(ALL)
 	@echo Installing LiDAR Viewer in $(INSTALLDIR)...
 	@install -d $(INSTALLDIR)
@@ -134,4 +142,5 @@ install: $(ALL)
 	@install $(BINDIR)/LidarPreprocessor $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarIlluminator $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarViewer $(INSTALLDIR)/bin
+	@install $(BINDIR)/PrintPrimitiveFile $(INSTALLDIR)/bin
 

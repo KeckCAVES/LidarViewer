@@ -53,3 +53,9 @@ LiDAR Viewer 2.0:
 - LiDAR viewer can now do real-time point-based lighting with arbitrary
   numbers of OpenGL light sources when loading LiDAR files with pre-
   calculated point normal vectors.
+
+LiDAR Viewer 2.1:
+- Fixed bug in point-based lighting shader that for some reason only
+  showed up in Mac OS X.
+- Added utility to print contents of saved primitive files back to LiDAR
+  Viewer distribution.
