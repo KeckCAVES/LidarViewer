@@ -62,6 +62,11 @@ LidarToolFactory::~LidarToolFactory(void)
 	LidarTool::factory=0;
 	}
 
+const char* LidarToolFactory::getName(void) const
+	{
+	return "Point Cloud Projector";
+	}
+
 Vrui::Tool* LidarToolFactory::createTool(const Vrui::ToolInputAssignment& inputAssignment) const
 	{
 	/* Create a new object of the custom tool class: */
@@ -113,44 +118,52 @@ void LidarTool::frame(void)
 	/* Get pointer to input device: */
 	Vrui::InputDevice* iDevice=input.getDevice(0);
 	
-	/* Calculate ray equation in navigation coordinates: */
-	LidarOctree::Ray deviceRay(iDevice->getPosition(),iDevice->getRayDirection());
-	LidarOctree::Ray modelRay=deviceRay;
-	modelRay.transform(Vrui::getInverseNavigationTransformation());
-	modelRay.normalizeDirection();
-	
-	/* Intersect the ray with the LiDAR data set: */
-	Scalar lambda;
-	if(Vrui::isMaster())
+	if(transformEnabled)
 		{
-		/* Calculate the intersection: */
-		lambda=factory->octree->intersectRay(modelRay,Scalar(0.002));
+		/* Calculate ray equation in navigation coordinates: */
+		LidarOctree::Ray deviceRay(iDevice->getPosition(),iDevice->getRayDirection());
+		LidarOctree::Ray modelRay=deviceRay;
+		modelRay.transform(Vrui::getInverseNavigationTransformation());
+		modelRay.normalizeDirection();
 		
-		if(Vrui::getMainPipe()!=0)
+		/* Intersect the ray with the LiDAR data set: */
+		Scalar lambda;
+		if(Vrui::isMaster())
 			{
-			/* Send the intersection to the slaves: */
-			Vrui::getMainPipe()->write<Scalar>(lambda);
-			// Vrui::getMainPipe()->finishMessage();
+			/* Calculate the intersection: */
+			lambda=factory->octree->intersectRay(modelRay,Scalar(0.002));
+			
+			if(Vrui::getMainPipe()!=0)
+				{
+				/* Send the intersection to the slaves: */
+				Vrui::getMainPipe()->write<Scalar>(lambda);
+				// Vrui::getMainPipe()->finishMessage();
+				}
 			}
+		else
+			{
+			/* Receive the intersection from the master: */
+			Vrui::getMainPipe()->read<Scalar>(lambda);
+			}
+		
+		if(lambda>=Scalar(0))
+			{
+			/* Set the device position to the intersection point: */
+			Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(Vrui::getNavigationTransformation().transform(modelRay(lambda)));
+			transformedDevice->setTransformation(ts);
+			}
+		else
+			{
+			/* Move the device in the plane it currently inhabits: */
+			lambda=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-iDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
+			Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(lambda));
+			transformedDevice->setTransformation(ts);
+			}
+		transformedDevice->setDeviceRayDirection(deviceRay.getDirection());
 		}
 	else
 		{
-		/* Receive the intersection from the master: */
-		Vrui::getMainPipe()->read<Scalar>(lambda);
+		transformedDevice->setTransformation(iDevice->getTransformation());
+		transformedDevice->setDeviceRayDirection(iDevice->getDeviceRayDirection());
 		}
-	
-	if(lambda>=Scalar(0))
-		{
-		/* Set the device position to the intersection point: */
-		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(Vrui::getNavigationTransformation().transform(modelRay(lambda)));
-		transformedDevice->setTransformation(ts);
-		}
-	else
-		{
-		/* Move the device in the plane it currently inhabits: */
-		lambda=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-iDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
-		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(lambda));
-		transformedDevice->setTransformation(ts);
-		}
-	transformedDevice->setDeviceRayDirection(deviceRay.getDirection());
 	}

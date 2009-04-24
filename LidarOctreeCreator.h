@@ -111,7 +111,7 @@ class LidarOctreeCreator
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const TempOctreeList& sTempOctrees,const char* sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
+	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
 	~LidarOctreeCreator(void);
 	
 	/* Methods: */

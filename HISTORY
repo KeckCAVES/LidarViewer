@@ -59,3 +59,29 @@ LiDAR Viewer 2.1:
   showed up in Mac OS X.
 - Added utility to print contents of saved primitive files back to LiDAR
   Viewer distribution.
+
+LiDAR Viewer 2.2:
+- Added CalcLasRange utility to distribution; prints the bounding box of
+  the point set stored in a single LAS file, and the range of intensity
+  values to calculate a good color mask for LidarPreprocessor.
+- Added (temporary) -lasOffset x y z command line option to
+  LidarPreprocessor to subtract the given vector from all points read
+  from all following LAS files before coordinates are converted to 32-
+  bit IEEE floating point format. This will reduce or remove accuracy
+  issues when reading LAS files in UTM coordinates.
+
+LiDAR Viewer 2.3:
+- Added preprocessor to subtract a (relatively small) set of selected
+  points from a large base point set, creating a new LiDAR point set as
+  a result.
+- Added utility to calculate the similarity of two point subsets of the
+  same base point set.
+- Added an optional LidarViewer.cfg configuration file to persistently
+  store LiDAR Viewer configuration options. File is located in etc
+  directory underneath LiDAR Viewer's installation directory.
+- Now LidarPreprocessor reads configuration settings from
+  LidarViewer.cfg as well.
+
+LiDAR Viewer 2.4:
+- Incorporated most recent changes from development version:
+  - Ability to combine LiDAR files in preprocessor

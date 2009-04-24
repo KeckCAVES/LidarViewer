@@ -1,6 +1,6 @@
 /***********************************************************************
 New version of LiDAR data preprocessor.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -23,17 +23,24 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdlib.h>
 #include <math.h>
 #include <iostream>
+#include <string>
 #include <vector>
 #include <Misc/ThrowStdErr.h>
 #include <Misc/Endianness.h>
+#include <Misc/FileNameExtensions.h>
 #include <Misc/File.h>
 #include <Misc/LargeFile.h>
 #include <Misc/Timer.h>
+#include <Misc/StandardValueCoders.h>
+#include <Misc/ConfigurationFile.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
+#include <Geometry/OrthonormalTransformation.h>
+#include <Geometry/GeometryValueCoders.h>
 
 #include "LidarTypes.h"
 #include "PointAccumulator.h"
+#include "LidarProcessOctree.h"
 #include "LidarOctreeCreator.h"
 
 void loadPointFileBin(PointAccumulator& pa,const char* fileName,const float colorMask[3])
@@ -98,7 +105,7 @@ void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float c
 		}
 	}
 
-void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double lasOffset[3])
 	{
 	/* Open the LAS input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
@@ -151,7 +158,7 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 		int pos[3];
 		file.read(pos,3);
 		for(int j=0;j<3;++j)
-			p[j]=float(double(pos[j])*scale[j]+offset[j]);
+			p[j]=float(double(pos[j])*scale[j]+offset[j]-lasOffset[j]);
 		
 		/* Read the point intensity: */
 		float intensity=float(file.read<unsigned short>());
@@ -668,6 +675,48 @@ void loadPointFileOctree(PointAccumulator& pa,const char* fileNameStem,const flo
 	readOctreeFileSubtree(pa,octFile,obinFile,colorMask);
 	}
 
+/*****************************************************
+Helper class to load LiDAR files in new octree format:
+*****************************************************/
+
+class LidarFileLoader
+	{
+	/* Elements: */
+	private:
+	PointAccumulator& pa;
+	float colorMask[3];
+	
+	/* Constructors and destructors: */
+	public:
+	LidarFileLoader(PointAccumulator& sPa,const float sColorMask[3])
+		:pa(sPa)
+		{
+		for(int i=0;i<3;++i)
+			colorMask[i]=sColorMask[i];
+		}
+	
+	/* Methods: */
+	void operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
+		{
+		/* Check if this node is a leaf: */
+		if(node.isLeaf())
+			{
+			/* Add each node point to the point accumulator: */
+			for(unsigned int i=0;i<node.getNumPoints();++i)
+				pa.addPoint(node[i]);
+			}
+		}
+	};
+
+
+void loadLidarFile(PointAccumulator& pa,const char* lidarFileName,const float colorMask[3])
+	{
+	/* Open the LiDAR file: */
+	LidarProcessOctree lpo(lidarFileName,size_t(64)*size_t(1024)*size_t(1024));
+	LidarFileLoader lfl(pa,colorMask);
+	lpo.processNodesPostfix(lfl);
+	}
+
 /**************
 Helper classes:
 **************/
@@ -686,6 +735,7 @@ enum PointFileType // Enumerated type for point file formats
 	CSVRGB, // Strict comma-separated values file with RGB data
 	IDL, // Redshift data file in IDL format
 	OCTREE, // Point octree file in old file format
+	LIDAR, // LiDAR file in new octree file format
 	ILLEGAL
 	};
 
@@ -723,15 +773,44 @@ bool readColumnIndexMask(int argc,char* argv[],int& argi,int columnIndices[6])
 
 int main(int argc,char* argv[])
 	{
-	/* Parse the command line and load all input files: */
-	Misc::Timer loadTimer;
+	/* Set default values for all parameters: */
+	unsigned int memoryCacheSize=512;
+	unsigned int tempOctreeMaxNumPointsPerNode=4096;
+	std::string tempOctreeFileNameTemplate="/tmp/LidarPreprocessorTempOctree";
+	unsigned int maxNumPointsPerNode=4096;
+	std::string tempPointFileNameTemplate="/tmp/LidarPreprocessorTempPoints";
+	
+	try
+		{
+		/* Open LidarViewer's configuration file: */
+		Misc::ConfigurationFile configFile(LIDARVIEWER_CONFIGFILENAME);
+		Misc::ConfigurationFileSection cfg=configFile.getSection("/LidarPreprocessor");
+		
+		/* Override program settings from configuration file: */
+		memoryCacheSize=cfg.retrieveValue<unsigned int>("./memoryCacheSize",memoryCacheSize);
+		tempOctreeMaxNumPointsPerNode=cfg.retrieveValue<unsigned int>("./tempOctreeMaxNumPointsPerNode",tempOctreeMaxNumPointsPerNode);
+		tempOctreeFileNameTemplate=cfg.retrieveValue<std::string>("./tempOctreeFileNameTemplate",tempOctreeFileNameTemplate);
+		maxNumPointsPerNode=cfg.retrieveValue<unsigned int>("./maxNumPointsPerNode",maxNumPointsPerNode);
+		tempPointFileNameTemplate=cfg.retrieveValue<std::string>("./tempPointFileNameTemplate",tempPointFileNameTemplate);
+		}
+	catch(std::runtime_error err)
+		{
+		/* Just ignore the error */
+		}
+	
+	/* Initialize transient parameters: */
 	const char* outputFileName=0;
-	unsigned int maxPointsPerNode=1024;
-	PointAccumulator pa;
-	const char* tempPointsFileNameTemplate="/tmp/LidarPreprocessorTempPointsXXXXXX";
 	PointFileType pointFileType=AUTO;
 	float colorMask[3]={1.0f,1.0f,1.0f};
 	int asciiColumnIndices[6];
+	double lasOffset[3]={0.0,0.0,0.0};
+	bool havePoints=false;
+	
+	/* Parse the command line and load all input files: */
+	Misc::Timer loadTimer;
+	PointAccumulator pa;
+	pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
+	pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -748,7 +827,7 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					maxPointsPerNode=(unsigned int)(atoi(argv[i]));
+					maxNumPointsPerNode=(unsigned int)(atoi(argv[i]));
 				else
 					std::cerr<<"Dangling -np flag on command line"<<std::endl;
 				}
@@ -756,7 +835,10 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					pa.setMemorySize(atoi(argv[i]),pa.getMaxNumPointsPerNode());
+					{
+					memoryCacheSize=(unsigned int)(atoi(argv[i]));
+					pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
+					}
 				else
 					std::cerr<<"Dangling -ooc flag on command line"<<std::endl;
 				}
@@ -764,7 +846,15 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					pa.setTempOctreeFileNameTemplate(argv[i]);
+					{
+					if(!havePoints)
+						{
+						tempOctreeFileNameTemplate=argv[i];
+						pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
+						}
+					else
+						std::cerr<<"Ignoring -to flag; must be specified before any input point sets are read"<<std::endl;
+					}
 				else
 					std::cerr<<"Dangling -to flag on command line"<<std::endl;
 				}
@@ -772,7 +862,7 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					tempPointsFileNameTemplate=argv[i];
+					tempPointFileNameTemplate=argv[i];
 				else
 					std::cerr<<"Dangling -tp flag on command line"<<std::endl;
 				}
@@ -792,6 +882,18 @@ int main(int argc,char* argv[])
 					std::cerr<<"Dangling -c flag on command line"<<std::endl;
 					}
 				}
+			else if(strcasecmp(argv[i]+1,"transform")==0)
+				{
+				++i;
+				if(i<argc)
+					{
+					/* Set the point accumulator's current transformation: */
+					PointAccumulator::ONTransform transform=Misc::ValueCoder<PointAccumulator::ONTransform>::decode(argv[i],argv[i]+strlen(argv[i]),0);
+					pa.setTransform(transform);
+					}
+				else
+					std::cerr<<"Dangling -transform flag on command line"<<std::endl;
+				}
 			else if(strcasecmp(argv[i]+1,"auto")==0)
 				pointFileType=AUTO;
 			else if(strcasecmp(argv[i]+1,"bin")==0)
@@ -800,6 +902,14 @@ int main(int argc,char* argv[])
 				pointFileType=BINRGB;
 			else if(strcasecmp(argv[i]+1,"las")==0)
 				pointFileType=LAS;
+			else if(strcasecmp(argv[i]+1,"lasoffset")==0)
+				{
+				for(int j=0;j<3;++j)
+					{
+					++i;
+					lasOffset[j]=atof(argv[i]);
+					}
+				}
 			else if(strcasecmp(argv[i]+1,"xyzi")==0)
 				pointFileType=XYZI;
 			else if(strcasecmp(argv[i]+1,"xyzrgb")==0)
@@ -852,6 +962,8 @@ int main(int argc,char* argv[])
 				pointFileType=IDL;
 			else if(strcasecmp(argv[i]+1,"oct")==0)
 				pointFileType=OCTREE;
+			else if(strcasecmp(argv[i]+1,"lidar")==0)
+				pointFileType=LIDAR;
 			else
 				std::cerr<<"Unrecognized command line option "<<argv[i]<<std::endl;
 			}
@@ -861,10 +973,7 @@ int main(int argc,char* argv[])
 			if(thisPointFileType==AUTO)
 				{
 				/* Find the extension of the input file: */
-				const char* extPtr=0;
-				for(const char* cPtr=argv[i];*cPtr!='\0';++cPtr)
-					if(*cPtr=='.')
-						extPtr=cPtr;
+				const char* extPtr=Misc::getExtension(argv[i]);
 				
 				/* Determine the file type: */
 				if(strcasecmp(extPtr,".bin")==0)
@@ -879,6 +988,8 @@ int main(int argc,char* argv[])
 					thisPointFileType=XYZI;
 				else if(strcasecmp(extPtr,".oct")==0)
 					thisPointFileType=OCTREE;
+				else if(strcasecmp(extPtr,".LiDAR")==0)
+					thisPointFileType=LIDAR;
 				else
 					thisPointFileType=ILLEGAL;
 				}
@@ -888,66 +999,84 @@ int main(int argc,char* argv[])
 				case BIN:
 					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileBin(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case BINRGB:
 					std::cout<<"Processing RGB binary input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileBinRgb(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case LAS:
 					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileLas(pa,argv[i],colorMask);
+					loadPointFileLas(pa,argv[i],colorMask,lasOffset);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case XYZI:
 					std::cout<<"Processing XYZI input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileXyzi(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case XYZRGB:
 					std::cout<<"Processing XYZRGB input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileXyzrgb(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case ASCII:
 					std::cout<<"Processing generic ASCII input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileGenericASCII(pa,argv[i],false,false,asciiColumnIndices,colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case ASCIIRGB:
 					std::cout<<"Processing generic RGB ASCII input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileGenericASCII(pa,argv[i],false,true,asciiColumnIndices,colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case CSV:
 					std::cout<<"Processing generic CSV input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileGenericASCII(pa,argv[i],true,false,asciiColumnIndices,colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case CSVRGB:
 					std::cout<<"Processing generic RGB CSV input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileGenericASCII(pa,argv[i],true,true,asciiColumnIndices,colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case IDL:
 					std::cout<<"Processing redshift IDL input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileIdl(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case OCTREE:
 					std::cout<<"Processing LiDAR octree input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileOctree(pa,argv[i],colorMask);
+					havePoints=true;
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case LIDAR:
+					std::cout<<"Processing LiDAR input file "<<argv[i]<<"..."<<std::flush;
+					loadLidarFile(pa,argv[i],colorMask);
+					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
@@ -973,7 +1102,7 @@ int main(int argc,char* argv[])
 		std::cerr<<"             -CSV <x column> <y column> <z column> [<intensity column>]"<<std::endl;
 		std::cerr<<"             -CSVRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
 		std::cerr<<"             -IDL"<<std::endl;
-		std::cerr<<"             -OCTREE"<<std::endl;
+		std::cerr<<"             -OCT"<<std::endl;
 		return 1;
 		}
 	
@@ -983,7 +1112,7 @@ int main(int argc,char* argv[])
 	
 	/* Construct an octree with less than maxPointsPerNode points per leaf: */
 	Misc::Timer createTimer;
-	LidarOctreeCreator tree(pa.getMaxNumCacheablePoints(),maxPointsPerNode,pa.getTempOctrees(),tempPointsFileNameTemplate);
+	LidarOctreeCreator tree(pa.getMaxNumCacheablePoints(),maxNumPointsPerNode,pa.getTempOctrees(),tempPointFileNameTemplate+"XXXXXX");
 	
 	/* Delete the temporary point octrees: */
 	pa.deleteTempOctrees();

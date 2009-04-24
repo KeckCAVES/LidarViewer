@@ -1,5 +1,5 @@
 ========================================================================
-README for LiDAR Viewer version 2.0
+README for LiDAR Viewer version 2.4
 Copyright (c) 2004-2009 Oliver Kreylos
 ========================================================================
 
@@ -23,8 +23,8 @@ http://www.keckcaves.org), and the W.M. Keck Foundation.
 Description
 ===========
 
-LiDAR Viewer consists of three components. LidarPreprocessor takes raw
-point cloud data from one or more input files in a variety of file
+LiDAR Viewer consists of three main components. LidarPreprocessor takes
+raw point cloud data from one or more input files in a variety of file
 formats and converts them to LiDAR Viewer's internal hierarchical
 representation. LidarIlluminator reads a pre-processed point cloud file
 and calculates a local best-fitting plane for each point. The normal
@@ -37,7 +37,7 @@ rates.
 Requirements
 ============
 
-LiDAR Viewer requires Vrui version 1.0 build 055 or newer.
+LiDAR Viewer version 2.4 requires Vrui version 1.0 build 057 or newer.
 
 Installation Guide
 ==================
@@ -57,12 +57,12 @@ accounts.
 
 1. Change into ~/src directory and unpack the LiDAR Viewer tarball:
    > cd ~/src
-   > tar xfz <download path>/LidarViewer-2.0.tar.gz
+   > tar xfz <download path>/LidarViewer-2.4.tar.gz
    - or -
-   > tar xf <download path>/LidarViewer-2.0.tar
+   > tar xf <download path>/LidarViewer-2.4.tar
 
 2. Change into LiDAR Viewer base directory:
-   > cd LidarViewer-2.0
+   > cd LidarViewer-2.4
 
 3. Adapt makefile if Vrui installation path is *not* ~/Vrui-1.0 by
    setting the VRUIDIR variable to the correct location. VRUIDIR is
@@ -73,14 +73,19 @@ accounts.
 4. Optional: Adapt makefile if LiDAR Viewer is to be installed in a
    different location, for example /usr/local. Set INSTALLDIR to the
    desired target location. LiDAR Viewer will be then be installed in
-   $(INSTALLDIR)/bin.
+   <INSTALLDIR>/bin, and its configuration file will be installed in
+   <INSTALLDIR>/etc (where <INSTALLDIR> is the value of INSTALLDIR set
+   in the makefile).
 
 5. Build LiDAR Viewer:
    > make
-   This creates three executables in ./bin: The LiDAR data
-   preprocessor, LidarPreprocessor, the processor to calculate lighting
-   data, LidarIlluminator, and the LiDAR data viewer itself,
-   LidarViewer.
+   This creates the following executables in ./bin: The LAS file range
+   calculation utility, CalcLasRange; the LiDAR data preprocessor,
+   LidarPreprocessor; the point cloud subtraction filter,
+   LidarSubtractor; the processor to calculate lighting information,
+   LidarIlluminator; the LiDAR data viewer itself, LidarViewer; and a
+   utility to print saved primitives in human-readable form,
+   PrintPrimitiveFile.
 
 6. Optional: Install LiDAR Viewer in the selected target location.
    This is only necessary if the INSTALLDIR variable in the makefile
@@ -89,17 +94,19 @@ accounts.
    > make install
    - or, if the target location is a system directory -
    > sudo make install
+   This will copy all executables into <INSTALLDIR>/bin, and the
+   LidarViewer.cfg configuration file into <INSTALLDIR>/etc.
 
 7. Optional: Add directory containing the LiDAR Viewer executables
-   (~/src/LidarViewer-2.0/bin in the default installation,
-   $(INSTALLDIR)/bin otherwise) to the user's search path. This allows
+   (~/src/LidarViewer-2.4/bin in the default installation,
+   <INSTALLDIR>/bin otherwise) to the user's search path. This allows
    running LiDAR Viewer from any directory. Using csh or tcsh:
-   > setenv PATH ${PATH}:~/src/LidarViewer-2.0/bin
+   > setenv PATH ${PATH}:~/src/LidarViewer-2.4/bin
    - or -
    > setenv PATH ${PATH}:<INSTALLDIR>/bin
    where <INSTALLDIR> is the target location set in the makefile.
    Using bash:
-   > export PATH=${PATH}:~/src/LidarViewer-2.0/bin
+   > export PATH=${PATH}:~/src/LidarViewer-2.4/bin
    - or -
    > export PATH=${PATH}:<INSTALLDIR>/bin
    These lines can also be added to the user's .cshrc or .bashrc files
@@ -117,3 +124,15 @@ directory, (see steps 4 and 6 above).
 
 2. See Vrui-1.0 documentation on Vrui's basic user interface and how to
    use LiDAR Viewer.
+
+Storing Persistent Configuration Data
+=====================================
+
+The components of the LiDAR Viewer software have many options that can
+be configured via their command lines, or via menus or dialogs from
+inside a component. To allow customization, the LiDAR Viewer components
+read many of their options from a configuration file at startup. All
+LiDAR Viewer components will search for this configuration file,
+LidarViewer.cfg, in an etc directory underneath the installation
+directory (~/src/LidarViewer-2.4/etc in the default installation,
+<INSTALLDIR>/etc otherwise).

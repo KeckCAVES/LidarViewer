@@ -185,10 +185,12 @@ void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node,unsigned
 		/* Create a temporary point file name: */
 		char fnt[1024];
 		strcpy(fnt,tempPointFileNameTemplate.c_str());
-		mkstemp(fnt);
+		int pointFileFd=mkstemp(fnt);
+		if(pointFileFd<0)
+			Misc::throwStdErr("LidarOctreeCreator::writeNodePoints: Unable to open temporary point file %s",fnt);
 		
 		/* Create the temporary point file: */
-		tempPointFiles[level].file=new File(fnt,"w+b",File::DontCare);
+		tempPointFiles[level].file=new File(pointFileFd,"w+b",File::DontCare);
 		tempPointFiles[level].fileName=fnt;
 		}
 	
@@ -506,7 +508,7 @@ void LidarOctreeCreator::writeSubtree(const LidarOctreeCreator::Node& node,unsig
 		}
 	}
 
-LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const LidarOctreeCreator::TempOctreeList& sTempOctrees,const char* sTempPointFileNameTemplate)
+LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const LidarOctreeCreator::TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate)
 	:maxNumCachablePoints(sMaxNumCachablePoints),
 	 maxNumPointsPerNode(sMaxNumPointsPerNode),
 	 tempOctrees(sTempOctrees),

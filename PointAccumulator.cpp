@@ -77,9 +77,21 @@ void PointAccumulator::setMemorySize(size_t memorySize,unsigned int newMaxNumPoi
 	points.reserve(maxNumCacheablePoints);
 	}
 
-void PointAccumulator::setTempOctreeFileNameTemplate(const char* newTempOctreeFileNameTemplate)
+void PointAccumulator::setTempOctreeFileNameTemplate(std::string newTempOctreeFileNameTemplate)
 	{
 	tempOctreeFileNameTemplate=newTempOctreeFileNameTemplate;
+	}
+
+void PointAccumulator::setTransform(const PointAccumulator::ONTransform& newTransform)
+	{
+	if(newTransform.getTranslation()!=ONTransform::Vector::zero||newTransform.getRotation()!=ONTransform::Rotation::identity)
+		{
+		/* Convert the transformation to an affine transformation: */
+		transform=ATransform(newTransform);
+		haveTransform=true;
+		}
+	else
+		haveTransform=false;
 	}
 
 void PointAccumulator::finishReading(void)

@@ -61,8 +61,8 @@ class Cube // Class representing a cube
 		for(int i=0;i<3;++i)
 			{
 			Scalar sizeDiff=Math::div2(boxSize-box.getSize(i));
-			min[i]=box.getMin(i)-sizeDiff;
-			max[i]=box.getMax(i)+sizeDiff;
+			min[i]=box.min[i]-sizeDiff;
+			max[i]=box.max[i]+sizeDiff;
 			}
 		}
 	Cube(Box& box) // Ditto
@@ -77,8 +77,8 @@ class Cube // Class representing a cube
 		for(int i=0;i<3;++i)
 			{
 			Scalar sizeDiff=Math::div2(boxSize-box.getSize(i));
-			min[i]=box.getMin(i)-sizeDiff;
-			max[i]=box.getMax(i)+sizeDiff;
+			min[i]=box.min[i]-sizeDiff;
+			max[i]=box.max[i]+sizeDiff;
 			}
 		}
 	Cube(const Cube& parentCube,int octantIndex) // Creates a cube describing one octant of a parent cube

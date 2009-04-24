@@ -27,6 +27,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/CallbackData.h>
 #include <Geometry/Plane.h>
 #include <GL/gl.h>
+#include <GL/GLColor.h>
 #include <GL/GLObject.h>
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
@@ -161,9 +162,12 @@ class LidarViewer:public Vrui::Application,public GLObject
 	/* Interaction state: */
 	bool overrideTools; // Flag whether interaction settings changes influence existing tools
 	Vrui::Scalar brushSize; // Default physical-coordinate size for new interaction brushes
+	GLColor<GLfloat,4> brushColor; // Color to render selection brush, with transparency
 	SelectorLocator::SelectorMode defaultSelectorMode; // Selection mode for new selector locators
 	LocatorList locators; // List of currently existing locators
 	Comm::MulticastPipe* extractorPipe; // Pipe to synchronize feature extraction on a distributed rendering cluster
+	GLColor<GLfloat,4> primitiveColor; // Color to render primitives, with transparency
+	GLColor<GLfloat,4> selectedPrimitiveColor; // Color to render selected primitives, with transparency
 	PrimitiveList primitives; // List of extracted primitives
 	int lastPickedPrimitive; // Index of the most recently picked primitive
 	std::vector<bool> primitiveSelectedFlags; // List of selected flags for extracted primitives
@@ -207,6 +211,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void deselectPrimitive(int primitiveIndex); // Deselects the given primitive
 	void deletePrimitive(int primitiveIndex); // Deletes the given primitive from the list
 	void updateSun(void); // Updates the state of the sun light source
+	void setEnableSun(bool newEnableSun); // Enables or disables the sun light source
 	
 	/* Constructors and destructors: */
 	public:

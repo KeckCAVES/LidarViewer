@@ -27,13 +27,11 @@
 # must be adjusted here as well.
 VRUIDIR = $(HOME)/Vrui-1.0
 
-# Base installation directory for 3D Visualizer and its module
-# plug-ins. The module plug-ins cannot be moved from this location
-# after installation, or 3D Visualizer will not find them. If this is
-# set to the default of $(PWD), 3D Visualizer does not have to be
-# installed to be run. 3D Visualizer's executable, plug-ins, and
-# resources will be installed in the bin, lib (or lib64), and share
-# directories underneath the given base directory, respectively.
+# Base installation directory for LiDAR Viewer and its configuration
+# file.If this is set to the default of $(PWD), LiDAR Viewer does not
+# have to be installed to be run. LiDAR Viewer's executables, and
+# configuration file will be installed in the bin and etc directories
+# underneath the given base directory, respectively.
 INSTALLDIR = $(shell pwd)
 
 # Set up additional flags for the C++ compiler:
@@ -69,9 +67,12 @@ $(OBJDIR)/%.o: %.cpp
 	@g++ -c -o $@ $(VRUI_CFLAGS) $(CFLAGS) $<
 
 # Rule to build all LiDAR Viewer components:
-ALL = $(BINDIR)/LidarPreprocessor \
+ALL = $(BINDIR)/CalcLasRange \
+      $(BINDIR)/LidarPreprocessor \
+      $(BINDIR)/LidarSubtractor \
       $(BINDIR)/LidarIlluminator \
       $(BINDIR)/LidarViewer \
+      $(BINDIR)/PointSetSimilarity \
       $(BINDIR)/PrintPrimitiveFile
 .PHONY: all
 all: $(ALL)
@@ -87,11 +88,23 @@ distclean:
 	-rm -rf $(OBJDIRBASE)
 	-rm -rf $(BINDIRBASE)
 
+CALCLASRANGE_SOURCES = CalcLasRange.cpp
+
+$(BINDIR)/CalcLasRange: $(CALCLASRANGE_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: CalcLasRange
+CalcLasRange: $(BINDIR)/CalcLasRange
+
 LIDARPREPROCESSOR_SOURCES = SplitPoints.cpp \
                             TempOctree.cpp \
-                            LidarOctreeCreator.cpp \
                             PointAccumulator.cpp \
+                            LidarProcessOctree.cpp \
+                            LidarOctreeCreator.cpp \
                             LidarPreprocessor.cpp
+
+$(OBJDIR)/LidarPreprocessor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'
 
 $(BINDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 	@mkdir -p $(BINDIR)
@@ -99,6 +112,20 @@ $(BINDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
 .PHONY: LidarPreprocessor
 LidarPreprocessor: $(BINDIR)/LidarPreprocessor
+
+LIDARSUBTRACTOR_SOURCES = LidarProcessOctree.cpp \
+                          SplitPoints.cpp \
+                          TempOctree.cpp \
+                          LidarOctreeCreator.cpp \
+                          PointAccumulator.cpp \
+                          LidarSubtractor.cpp
+
+$(BINDIR)/LidarSubtractor: $(LIDARSUBTRACTOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: LidarSubtractor
+LidarSubtractor: $(BINDIR)/LidarSubtractor
 
 LIDARILLUMINATOR_SOURCES = LidarProcessOctree.cpp \
                            NormalCalculator.cpp \
@@ -121,12 +148,21 @@ LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       PointBasedLightingShader.cpp \
                       LidarViewer.cpp
 
+$(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'
+
 $(BINDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 	@mkdir -p $(BINDIR)
 	@echo Linking $@...
 	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
 .PHONY: LidarViewer
 LidarViewer: $(BINDIR)/LidarViewer
+
+$(BINDIR)/PointSetSimilarity: $(OBJDIR)/PointSetSimilarity.o
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: PointSetSimilarity
+PointSetSimilarity: $(BINDIR)/PointSetSimilarity
 
 $(BINDIR)/PrintPrimitiveFile: $(OBJDIR)/PrintPrimitiveFile.o
 	@mkdir -p $(BINDIR)
@@ -139,8 +175,12 @@ install: $(ALL)
 	@echo Installing LiDAR Viewer in $(INSTALLDIR)...
 	@install -d $(INSTALLDIR)
 	@install -d $(INSTALLDIR)/bin
+	@install $(BINDIR)/CalcLasRange $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarPreprocessor $(INSTALLDIR)/bin
+	@install $(BINDIR)/LidarSubtractor $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarIlluminator $(INSTALLDIR)/bin
 	@install $(BINDIR)/LidarViewer $(INSTALLDIR)/bin
+	@install $(BINDIR)/PointSetSimilarity $(INSTALLDIR)/bin
 	@install $(BINDIR)/PrintPrimitiveFile $(INSTALLDIR)/bin
-
+	@install -d $(INSTALLDIR)/etc
+	@install etc/LidarViewer.cfg $(INSTALLDIR)/etc

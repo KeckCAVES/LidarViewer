@@ -200,7 +200,7 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 		pointBbox.addPoint(points[i]);
 	
 	/* Extend the bounding box by a small delta to include all points in a half-open box: */
-	Point newMax=pointBbox.getMax();
+	Point newMax=pointBbox.max;
 	for(int i=0;i<3;++i)
 		{
 		Scalar delta=Scalar(1);
@@ -216,7 +216,7 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 			}
 		newMax[i]+=delta;
 		}
-	pointBbox=Box(pointBbox.getMin(),newMax);
+	pointBbox=Box(pointBbox.min,newMax);
 	
 	/* Set the root's domain to contain all points: */
 	root.domain=Cube(pointBbox);

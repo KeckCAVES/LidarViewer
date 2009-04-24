@@ -48,7 +48,8 @@ class LidarToolFactory:public Vrui::ToolFactory // Class for factories that crea
 		}
 	virtual ~LidarToolFactory(void);
 	
-	/* Methods: */
+	/* Methods from ToolFactory: */
+	virtual const char* getName(void) const;
 	virtual Vrui::Tool* createTool(const Vrui::ToolInputAssignment& inputAssignment) const;
 	virtual void destroyTool(Vrui::Tool* tool) const;
 	};
@@ -65,7 +66,7 @@ class LidarTool:public Vrui::TransformTool // The LiDAR tool class
 	public:
 	LidarTool(const Vrui::ToolFactory* factory,const Vrui::ToolInputAssignment& inputAssignment);
 	
-	/* Methods: */
+	/* Methods from Tool: */
 	virtual void initialize(void);
 	virtual const Vrui::ToolFactory* getFactory(void) const;
 	virtual void frame(void);

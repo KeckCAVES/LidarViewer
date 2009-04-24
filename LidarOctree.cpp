@@ -664,13 +664,16 @@ void LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Inte
 	/* Check if the interactor's region of influence intersects the node's domain: */
 	Scalar dist2=node->domain.sqrDist(interactor.center);
 	Scalar ir2=Math::sqr(interactor.radius);
-	if(dist2<ir2&&node->selectedPoints!=0)
+	if(dist2<ir2)
 		{
-		/* Deselect points in this node: */
-		if(node->haveNormals)
-			deselectPointsInNode<NVertex>(node,interactor);
-		else
-			deselectPointsInNode<Vertex>(node,interactor);
+		if(node->selectedPoints!=0)
+			{
+			/* Deselect points in this node: */
+			if(node->haveNormals)
+				deselectPointsInNode<NVertex>(node,interactor);
+			else
+				deselectPointsInNode<Vertex>(node,interactor);
+			}
 		
 		if(node->children!=0)
 			{

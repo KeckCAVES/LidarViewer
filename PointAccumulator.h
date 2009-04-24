@@ -26,6 +26,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <string>
 #include <vector>
+#include <Geometry/OrthonormalTransformation.h>
+#include <Geometry/AffineTransformation.h>
 
 #include "LidarTypes.h"
 
@@ -34,6 +36,11 @@ class TempOctree;
 
 class PointAccumulator
 	{
+	/* Embedded classes: */
+	public:
+	typedef Geometry::OrthonormalTransformation<double,3> ONTransform; // Type for rigid body transformations
+	typedef Geometry::AffineTransformation<double,3> ATransform; // Type for affine transformations
+	
 	/* Elements: */
 	private:
 	size_t maxNumCacheablePoints; // Maximum number of points allowed in memory at a time
@@ -41,6 +48,8 @@ class PointAccumulator
 	unsigned int maxNumPointsPerNode; // Maximum number of points per node in the temporary octrees
 	std::string tempOctreeFileNameTemplate; // File name template for temporary octrees
 	std::vector<TempOctree*> tempOctrees; // List of temporary octrees holding out-of-memory point sets
+	bool haveTransform; // Flag if there is a current point transformation
+	ATransform transform; // The current point transformation as an affine transformation
 	
 	/* Private methods: */
 	void savePoints(void); // Saves the current in-memory point set to a temporary octree file
@@ -60,7 +69,8 @@ class PointAccumulator
 		return maxNumPointsPerNode;
 		}
 	void setMemorySize(size_t memorySize,unsigned int newMaxNumPointsPerNode); // Limits the point accumulator to the given amount of memory in megabytes
-	void setTempOctreeFileNameTemplate(const char* newTempOctreeFileNameTemplate); // Sets the template for temporary octree file names
+	void setTempOctreeFileNameTemplate(std::string newTempOctreeFileNameTemplate); // Sets the template for temporary octree file names
+	void setTransform(const ONTransform& newTransform); // Sets a new point transformation
 	void addPoint(const LidarPoint& lp) // Pushes a LiDAR point into the current point set
 		{
 		/* Check if the current in-memory point set is too big: */
@@ -71,7 +81,13 @@ class PointAccumulator
 			}
 		
 		/* Store the new point: */
-		points.push_back(lp);
+		if(haveTransform)
+			{
+			LidarPoint tlp=LidarPoint(transform.transform(ATransform::Point(lp)),lp.value);
+			points.push_back(tlp);
+			}
+		else
+			points.push_back(lp);
 		}
 	void finishReading(void); // Finishes reading points from source files
 	std::vector<TempOctree*>& getTempOctrees(void) // Returns the list of temporary octrees

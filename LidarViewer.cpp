@@ -27,6 +27,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdexcept>
 #include <Misc/ThrowStdErr.h>
 #include <Misc/File.h>
+#include <Misc/StandardValueCoders.h>
+#include <Misc/ConfigurationFile.h>
 #include <Comm/MulticastPipe.h>
 #include <Geometry/Vector.h>
 #include <Geometry/TranslationTransformation.h>
@@ -34,6 +36,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/gl.h>
 #include <GL/GLMaterial.h>
 #include <GL/GLContextData.h>
+#include <GL/GLValueCoders.h>
 #include <GL/GLGeometryWrappers.h>
 #include <GL/GLTransformationWrappers.h>
 #include <GL/GLModels.h>
@@ -553,6 +556,11 @@ void LidarViewer::draggingToolCallback(Vrui::DraggingTool::DragStartCallbackData
 
 int LidarViewer::addPrimitive(Primitive* newPrimitive)
 	{
+	/* Set the new primitive's color: */
+	newPrimitive->setSurfaceColor(primitiveColor);
+	newPrimitive->setGridColor(Primitive::Color(0.2f,0.2f,0.2f));
+	
+	/* Store the new primitive: */
 	primitives.push_back(newPrimitive);
 	primitiveSelectedFlags.push_back(false);
 	return int(primitives.size())-1;
@@ -562,7 +570,7 @@ void LidarViewer::selectPrimitive(int primitiveIndex)
 	{
 	if(!primitiveSelectedFlags[primitiveIndex])
 		{
-		primitives[primitiveIndex]->setSurfaceColor(Primitive::Color(0.1f,0.5f,0.5f,0.5f));
+		primitives[primitiveIndex]->setSurfaceColor(selectedPrimitiveColor);
 		primitiveSelectedFlags[primitiveIndex]=true;
 		}
 	}
@@ -571,7 +579,7 @@ void LidarViewer::deselectPrimitive(int primitiveIndex)
 	{
 	if(primitiveSelectedFlags[primitiveIndex])
 		{
-		primitives[primitiveIndex]->setSurfaceColor(Primitive::Color(0.5f,0.5f,0.1f,0.5f));
+		primitives[primitiveIndex]->setSurfaceColor(primitiveColor);
 		primitiveSelectedFlags[primitiveIndex]=false;
 		}
 	}
@@ -593,6 +601,40 @@ void LidarViewer::updateSun(void)
 	sun->getLight().position=GLLight::Position(GLLight::Scalar(x),GLLight::Scalar(y),GLLight::Scalar(z),GLLight::Scalar(0));
 	}
 
+void LidarViewer::setEnableSun(bool newEnableSun)
+	{
+	if(enableSun!=newEnableSun)
+		{
+		enableSun=newEnableSun;
+		
+		if(enableSun)
+			{
+			/* Store the headlight enable states of all viewers and disable all headlights: */
+			viewerHeadlightStates=new bool[Vrui::getNumViewers()];
+			for(int i=0;i<Vrui::getNumViewers();++i)
+				{
+				viewerHeadlightStates[i]=Vrui::getViewer(i)->getHeadlight().isEnabled();
+				Vrui::getViewer(i)->setHeadlightState(false);
+				}
+			
+			/* Enable and update the sun light source: */
+			sun->enable();
+			updateSun();
+			}
+		else
+			{
+			/* Reset the headlight enable states of all viewers: */
+			for(int i=0;i<Vrui::getNumViewers();++i)
+				Vrui::getViewer(i)->setHeadlightState(viewerHeadlightStates[i]);
+			delete[] viewerHeadlightStates;
+			viewerHeadlightStates=0;
+			
+			/* Disable the sun light source: */
+			sun->disable();
+			}
+		}
+	}
+
 LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	:Vrui::Application(argc,argv,appDefaults),
 	 octree(0),
@@ -605,45 +647,67 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 lastFrameTime(Vrui::getApplicationTime()),
 	 overrideTools(true),
 	 brushSize(Vrui::getGlyphRenderer()->getGlyphSize()*Vrui::Scalar(2.5)),
+	 brushColor(0.6f,0.6f,0.1f,0.5f),
 	 defaultSelectorMode(SelectorLocator::ADD),
 	 extractorPipe(Vrui::openPipe()),
+	 primitiveColor(0.5f,0.5f,0.1f,0.5f),
+	 selectedPrimitiveColor(0.1f,0.5f,0.5f,0.5f),
 	 lastPickedPrimitive(-1),
 	 mainMenu(0),renderDialog(0)
 	{
+	unsigned int memCacheSize=512;
+	unsigned int gfxCacheSize=128;
+	try
+		{
+		/* Open LidarViewer's configuration file: */
+		Misc::ConfigurationFile configFile(LIDARVIEWER_CONFIGFILENAME);
+		Misc::ConfigurationFileSection cfg=configFile.getSection("/LidarViewer");
+		
+		/* Override program settings from configuration file: */
+		renderQuality=cfg.retrieveValue<Scalar>("./renderQuality",renderQuality);
+		fncWeight=cfg.retrieveValue<Scalar>("./focusAndContextWeight",fncWeight);
+		pointSize=cfg.retrieveValue<float>("./pointSize",pointSize);
+		pointBasedLighting=cfg.retrieveValue<bool>("./enableLighting",pointBasedLighting);
+		usePointColors=cfg.retrieveValue<bool>("./usePointColors",usePointColors);
+		enableSun=cfg.retrieveValue<bool>("./enableSun",enableSun);
+		sunAzimuth=cfg.retrieveValue<Scalar>("./sunAzimuth",sunAzimuth);
+		sunElevation=cfg.retrieveValue<Scalar>("./sunElevation",sunElevation);
+		overrideTools=cfg.retrieveValue<bool>("./overrideTools",overrideTools);
+		brushSize=cfg.retrieveValue<Vrui::Scalar>("./brushSize",brushSize);
+		brushColor=cfg.retrieveValue<GLColor<GLfloat,4> >("./brushColor",brushColor);
+		primitiveColor=cfg.retrieveValue<GLColor<GLfloat,4> >("./primitiveColor",primitiveColor);
+		selectedPrimitiveColor=cfg.retrieveValue<GLColor<GLfloat,4> >("./selectedPrimitiveColor",selectedPrimitiveColor);
+		memCacheSize=cfg.retrieveValue<unsigned int>("./memoryCacheSize",memCacheSize);
+		gfxCacheSize=cfg.retrieveValue<unsigned int>("./graphicsCacheSize",gfxCacheSize);
+		}
+	catch(std::runtime_error err)
+		{
+		/* Just ignore the error */
+		}
+	
 	/* Parse the command line: */
-	unsigned int memCacheSize=512*1024*1024;
-	unsigned int gfxCacheSize=160*1024*1024;
 	bool haveOctreeFile=false;
-	const char* viewpointFileName=0;
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
 			{
-			if(strcasecmp(argv[i]+1,"cache")==0)
+			if(strcasecmp(argv[i]+1,"memoryCacheSize")==0)
 				{
 				if(i+1<argc)
 					{
 					++i;
-					memCacheSize=atoi(argv[i])*1024*1024;
+					memCacheSize=atoi(argv[i]);
 					}
 				}
-			else if(strcasecmp(argv[i]+1,"gfxcache")==0)
+			else if(strcasecmp(argv[i]+1,"graphicsCacheSize")==0)
 				{
 				if(i+1<argc)
 					{
 					++i;
-					gfxCacheSize=atoi(argv[i])*1024*1024;
+					gfxCacheSize=atoi(argv[i]);
 					}
 				}
-			else if(strcasecmp(argv[i]+1,"pointsize")==0)
-				{
-				if(i+1<argc)
-					{
-					++i;
-					pointSize=float(atof(argv[i]));
-					}
-				}
-			else if(strcasecmp(argv[i]+1,"quality")==0)
+			else if(strcasecmp(argv[i]+1,"renderQuality")==0)
 				{
 				if(i+1<argc)
 					{
@@ -651,14 +715,36 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 					renderQuality=Scalar(atof(argv[i]));
 					}
 				}
+			else if(strcasecmp(argv[i]+1,"focusAndContextWeight")==0)
+				{
+				if(i+1<argc)
+					{
+					++i;
+					fncWeight=Scalar(atof(argv[i]));
+					}
+				}
+			else if(strcasecmp(argv[i]+1,"pointSize")==0)
+				{
+				if(i+1<argc)
+					{
+					++i;
+					pointSize=float(atof(argv[i]));
+					}
+				}
+			else if(strcasecmp(argv[i]+1,"enableLighting")==0)
+				pointBasedLighting=true;
+			else if(strcasecmp(argv[i]+1,"usePointColors")==0)
+				usePointColors=true;
 			}
 		else if(!haveOctreeFile)
 			{
 			/* Load a LiDAR octree file: */
-			octree=new LidarOctree(argv[i],memCacheSize,gfxCacheSize);
+			octree=new LidarOctree(argv[i],size_t(memCacheSize)*size_t(1024*1024),size_t(gfxCacheSize)*size_t(1024*1024));
 			
 			haveOctreeFile=true;
 			}
+		else
+			std::cerr<<"LidarViewer::LidarViewer: Ignoring command line argument "<<argv[i]<<std::endl;
 		}
 	
 	if(!haveOctreeFile)
@@ -673,7 +759,10 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	
 	/* Create the sun lightsource: */
 	sun=Vrui::getLightsourceManager()->createLightsource(false);
+	bool newEnableSun=enableSun;
+	enableSun=false;
 	sun->disable();
+	setEnableSun(newEnableSun);
 	
 	/* Create the GUI: */
 	mainMenu=createMainMenu();
@@ -727,8 +816,7 @@ void LidarViewer::initContext(GLContextData& contextData) const
 	glDepthMask(GL_FALSE);
 	glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 	glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
-	glColor4f(0.6f,0.6f,0.1f,0.5f); // Yellow sphere
-	// glColor4f(0.6f,0.1f,0.6f,0.5f); // Purple sphere
+	glColor(brushColor);
 	glDrawSphereIcosahedron(1.0,5);
 	glBlendFunc(GL_ONE,GL_ONE);
 	glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
@@ -1256,36 +1344,8 @@ void LidarViewer::usePointColorsCallback(GLMotif::ToggleButton::ValueChangedCall
 
 void LidarViewer::enableSunCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
 	{
-	if(enableSun!=cbData->set)
-		{
-		enableSun=cbData->set;
-		
-		if(enableSun)
-			{
-			/* Store the headlight enable states of all viewers and disable all headlights: */
-			viewerHeadlightStates=new bool[Vrui::getNumViewers()];
-			for(int i=0;i<Vrui::getNumViewers();++i)
-				{
-				viewerHeadlightStates[i]=Vrui::getViewer(i)->getHeadlight().isEnabled();
-				Vrui::getViewer(i)->setHeadlightState(false);
-				}
-			
-			/* Enable and update the sun light source: */
-			sun->enable();
-			updateSun();
-			}
-		else
-			{
-			/* Reset the headlight enable states of all viewers: */
-			for(int i=0;i<Vrui::getNumViewers();++i)
-				Vrui::getViewer(i)->setHeadlightState(viewerHeadlightStates[i]);
-			delete[] viewerHeadlightStates;
-			viewerHeadlightStates=0;
-			
-			/* Disable the sun light source: */
-			sun->disable();
-			}
-		}
+	/* Enable the sun light source: */
+	setEnableSun(cbData->set);
 	}
 
 void LidarViewer::sunAzimuthSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
