@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -37,7 +37,7 @@ LidarProcessOctree::processNodesPrefix(
 	NodeProcessFunctorParam& processFunctor)
 	{
 	/* Lock the node: */
-	++node.processCounter;
+	node.enter();
 	
 	/* Process the node: */
 	processFunctor(node,nodeLevel);
@@ -55,7 +55,7 @@ LidarProcessOctree::processNodesPrefix(
 		}
 	
 	/* Unlock the node: */
-	--node.processCounter;
+	node.leave();
 	}
 
 template <class NodeProcessFunctorParam>
@@ -67,7 +67,7 @@ LidarProcessOctree::processNodesPostfix(
 	NodeProcessFunctorParam& processFunctor)
 	{
 	/* Lock the node: */
-	++node.processCounter;
+	node.enter();
 	
 	/* Check if the node is an interior node: */
 	if(node.childrenOffset!=0)
@@ -85,7 +85,7 @@ LidarProcessOctree::processNodesPostfix(
 	processFunctor(node,nodeLevel);
 	
 	/* Unlock the node: */
-	--node.processCounter;
+	node.leave();
 	}
 
 template <class ProcessFunctorParam>
@@ -96,7 +96,7 @@ LidarProcessOctree::processPoints(
 	ProcessFunctorParam& processFunctor)
 	{
 	/* Lock the node: */
-	++node.processCounter;
+	node.enter();
 	
 	/* Check if the node is a leaf node: */
 	if(node.childrenOffset==0)
@@ -117,7 +117,58 @@ LidarProcessOctree::processPoints(
 		}
 	
 	/* Unlock the node: */
-	--node.processCounter;
+	node.leave();
+	}
+
+template <class ProcessFunctorParam>
+inline
+void
+LidarProcessOctree::processPointsInBox(
+	typename LidarProcessOctree::Node& node,
+	const Box& box,
+	ProcessFunctorParam& processFunctor)
+	{
+	/* Lock the node: */
+	node.enter();
+	
+	/* Check if the box overlaps or contains the node's domain: */
+	int comparison=node.domain.compareBox(box);
+	
+	if(comparison&Cube::OVERLAPS)
+		{
+		/* Check if the node is a leaf node: */
+		if(node.childrenOffset==0)
+			{
+			if(comparison&Cube::CONTAINS)
+				{
+				/* Process all points in the node: */
+				for(unsigned int i=0;i<node.numPoints;++i)
+					processFunctor(node.points[i]);
+				}
+			else
+				{
+				/* Process all points in the node that lie inside the box: */
+				for(unsigned int i=0;i<node.numPoints;++i)
+					{
+					if(box.contains(node.points[i]))
+						processFunctor(node.points[i]);
+					}
+				}
+			}
+		else
+			{
+			/* Subdivide the node if necessary: */
+			if(node.children==0)
+				subdivide(node);
+			
+			/* Recurse into the node's children: */
+			for(int childIndex=0;childIndex<8;++childIndex)
+				processPointsInBox(node.children[childIndex],box,processFunctor);
+			}
+		}
+	
+	/* Unlock the node: */
+	node.leave();
 	}
 
 template <class DirectedProcessFunctorParam>
@@ -145,7 +196,8 @@ LidarProcessOctree::processPointsDirectedKdtree(
 			processPointsDirectedKdtree(points,left,mid-1,childSplitDimension,processFunctor);
 		
 		/* Process the point: */
-		processFunctor(points[mid]);
+		if(Geometry::sqrDist(points[mid],processFunctor.getQueryPoint())<=processFunctor.getQueryRadius2())
+			processFunctor(points[mid]);
 		
 		/* Traverse right child: */
 		if(right>mid&&Math::sqr(processFunctor.getQueryPoint()[splitDimension]-points[mid][splitDimension])<=processFunctor.getQueryRadius2())
@@ -158,7 +210,8 @@ LidarProcessOctree::processPointsDirectedKdtree(
 			processPointsDirectedKdtree(points,mid+1,right,childSplitDimension,processFunctor);
 		
 		/* Process the point: */
-		processFunctor(points[mid]);
+		if(Geometry::sqrDist(points[mid],processFunctor.getQueryPoint())<=processFunctor.getQueryRadius2())
+			processFunctor(points[mid]);
 		
 		/* Traverse left child: */
 		if(left<mid&&Math::sqr(processFunctor.getQueryPoint()[splitDimension]-points[mid][splitDimension])<=processFunctor.getQueryRadius2())
@@ -174,7 +227,7 @@ LidarProcessOctree::processPointsDirectedOctree(
 	DirectedProcessFunctorParam& processFunctor)
 	{
 	/* Lock the node: */
-	++node.processCounter;
+	node.enter();
 	
 	/* Check if the node is a leaf node: */
 	if(node.childrenOffset==0)
@@ -203,7 +256,8 @@ LidarProcessOctree::processPointsDirectedOctree(
 		*****************************************************************/
 		
 		#if OPTIMIZED_TRAVERSAL
-		/* Find child node containing query point: */
+		
+		/* Find the child node containing the query point: */
 		int queryChildIndex=0x0;
 		Scalar dist2s[3];
 		for(int i=0;i<3;++i)
@@ -245,12 +299,15 @@ LidarProcessOctree::processPointsDirectedOctree(
 			{0,4,1,5,2,6,3,7}, // Flip z, then x, then y
 			{0,4,2,6,1,5,3,7}, // Flip z, then y, then x
 			};
+		
 		#else
+		
 		/* Find child node containing query point: */
 		int queryChildIndex=0x0;
 		for(int i=0;i<3;++i)
 			if(processFunctor.getQueryPoint()[i]>=node.domain.getCenter(i))
 				queryChildIndex|=0x1<<i;
+		
 		#endif
 		
 		for(int ci=0;ci<8;++ci)
@@ -270,5 +327,5 @@ LidarProcessOctree::processPointsDirectedOctree(
 		}
 	
 	/* Unlock the node: */
-	--node.processCounter;
+	node.leave();
 	}

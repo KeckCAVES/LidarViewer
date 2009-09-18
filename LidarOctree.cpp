@@ -48,9 +48,9 @@ LidarOctree::Node::~Node(void)
 	{
 	/* Delete point array: */
 	if(haveNormals)
-		delete[] reinterpret_cast<NVertex*>(points);
+		delete[] static_cast<NVertex*>(points);
 	else
-		delete[] reinterpret_cast<Vertex*>(points);
+		delete[] static_cast<Vertex*>(points);
 	
 	/* Delete selected point flag mask: */
 	delete[] selectedPoints;
@@ -80,9 +80,7 @@ intersectRayWithPoints(
 	for(unsigned int i=0;i<numPoints;++i)
 		{
 		/* Check if the point is closer than the previous one and inside the cone: */
-		Vector sp;
-		for(int j=0;j<3;++j)
-			sp[j]=points[i].position[j]-ray.getOrigin()[j];
+		Vector sp=points[i].position-ray.getOrigin();
 		Scalar x=sp*ray.getDirection();
 		if(x>Scalar(0)&&x<lambdaMin)
 			{
@@ -180,9 +178,9 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 		{
 		/* Intersect the ray with all points in this node: */
 		if(haveNormals)
-			return intersectRayWithPoints(ray,lambda2,coneAngle2,reinterpret_cast<const NVertex*>(points),numPoints);
+			return intersectRayWithPoints(ray,lambda2,coneAngle2,static_cast<const NVertex*>(points),numPoints);
 		else
-			return intersectRayWithPoints(ray,lambda2,coneAngle2,reinterpret_cast<const Vertex*>(points),numPoints);
+			return intersectRayWithPoints(ray,lambda2,coneAngle2,static_cast<const Vertex*>(points),numPoints);
 		}
 	}
 
@@ -501,9 +499,9 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		{
 		/* Render straight from the node vertex array (only happens if GL_ARB_vertex_buffer_object not supported): */
 		if(node->haveNormals)
-			glVertexPointer(reinterpret_cast<const NVertex*>(node->points));
+			glVertexPointer(static_cast<const NVertex*>(node->points));
 		else
-			glVertexPointer(reinterpret_cast<const Vertex*>(node->points));
+			glVertexPointer(static_cast<const Vertex*>(node->points));
 		}
 	glDrawArrays(GL_POINTS,0,node->numPoints);
 	
@@ -644,11 +642,28 @@ void LidarOctree::selectPoints(LidarOctree::Node* node,const LidarOctree::Intera
 	Scalar ir2=Math::sqr(interactor.radius);
 	if(dist2<ir2)
 		{
+		{
+		Threads::Mutex::Lock selectionLock(node->selectionMutex);
+		
+		bool selectionEmpty=node->selectedPoints==0;
+		
 		/* Select points in this node: */
 		if(node->haveNormals)
 			selectPointsInNode<NVertex>(node,interactor);
 		else
 			selectPointsInNode<Vertex>(node,interactor);
+		
+		/* Check if this node just had its first points selected: */
+		if(selectionEmpty&&node->selectedPoints!=0)
+			{
+			/* Check if the node's parent is in the coarsening heap: */
+			if(node->parent!=0&&node->parent->coarseningHeapIndex!=~0x0)
+				{
+				Threads::Mutex::Lock coarseningHeapLock(coarseningHeapMutex);
+				coarseningHeap->remove(node->parent);
+				}
+			}
+		}
 		
 		if(node->children!=0)
 			{
@@ -659,7 +674,7 @@ void LidarOctree::selectPoints(LidarOctree::Node* node,const LidarOctree::Intera
 		}
 	}
 
-void LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Interactor& interactor)
+bool LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Interactor& interactor)
 	{
 	/* Check if the interactor's region of influence intersects the node's domain: */
 	Scalar dist2=node->domain.sqrDist(interactor.center);
@@ -668,6 +683,8 @@ void LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Inte
 		{
 		if(node->selectedPoints!=0)
 			{
+			Threads::Mutex::Lock selectionLock(node->selectionMutex);
+			
 			/* Deselect points in this node: */
 			if(node->haveNormals)
 				deselectPointsInNode<NVertex>(node,interactor);
@@ -678,21 +695,33 @@ void LidarOctree::deselectPoints(LidarOctree::Node* node,const LidarOctree::Inte
 		if(node->children!=0)
 			{
 			/* Recurse into the node's children: */
+			bool canCoarsen=true;
 			for(int childIndex=0;childIndex<8;++childIndex)
-				deselectPoints(&node->children[childIndex],interactor);
+				canCoarsen=deselectPoints(&node->children[childIndex],interactor)&&canCoarsen;
+			
+			if(canCoarsen&&node->coarseningHeapIndex==~0x0)
+				{
+				/* Insert the node into the coarsening heap: */
+				Threads::Mutex::Lock coarseningHeapLock(coarseningHeapMutex);
+				coarseningHeap->insert(node);
+				}
 			}
 		}
+	
+	return node->children==0&&node->selectedPoints==0;
 	}
 
-void LidarOctree::clearSelection(LidarOctree::Node* node)
+bool LidarOctree::clearSelection(LidarOctree::Node* node)
 	{
 	if(node->selectedPoints!=0)
 		{
+		Threads::Mutex::Lock selectionLock(node->selectionMutex);
+		
 		/* Deselect all selected points: */
 		bool pointsChanged=false;
 		if(node->haveNormals)
 			{
-			NVertex* points=reinterpret_cast<NVertex*>(node->points);
+			NVertex* points=static_cast<NVertex*>(node->points);
 			for(unsigned int i=0;i<node->numPoints;++i)
 				{
 				if(node->selectedPoints[i])
@@ -705,7 +734,7 @@ void LidarOctree::clearSelection(LidarOctree::Node* node)
 			}
 		else
 			{
-			Vertex* points=reinterpret_cast<Vertex*>(node->points);
+			Vertex* points=static_cast<Vertex*>(node->points);
 			for(unsigned int i=0;i<node->numPoints;++i)
 				{
 				if(node->selectedPoints[i])
@@ -731,9 +760,19 @@ void LidarOctree::clearSelection(LidarOctree::Node* node)
 	if(node->children!=0)
 		{
 		/* Recurse into the node's children: */
+		bool canCoarsen=true;
 		for(int childIndex=0;childIndex<8;++childIndex)
-			clearSelection(&node->children[childIndex]);
+			canCoarsen=clearSelection(&node->children[childIndex])&&canCoarsen;
+		
+		if(canCoarsen&&node->coarseningHeapIndex==~0x0)
+			{
+			/* Insert the node into the coarsening heap: */
+			Threads::Mutex::Lock coarseningHeapLock(coarseningHeapMutex);
+			coarseningHeap->insert(node);
+			}
 		}
+	
+	return node->children==0;
 	}
 
 void LidarOctree::loadNodePoints(LidarOctree::Node* node)
@@ -760,17 +799,13 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 				points[i].color[j]=pointsBuffer[i].value[j];
 			
 			/* Copy the normal vector: */
-			for(int j=0;j<3;++j)
-				points[i].normal[j]=NVertex::Normal::Scalar(normalsBuffer[i][j]);
+			points[i].normal=normalsBuffer[i];
 			
+			/* Copy the point position: */
+			points[i].position=pointsBuffer[i];
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			for(int j=0;j<3;++j)
-				points[i].position[j]=NVertex::Position::Scalar(pointsBuffer[i][j]-pointOffset[j]);
-			#else
-			/* Copy the points: */
-			for(int j=0;j<3;++j)
-				points[i].position[j]=NVertex::Position::Scalar(pointsBuffer[i][j]);
+			points[i].position-=pointOffset;
 			#endif
 			}
 		
@@ -796,20 +831,96 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 			for(int j=0;j<4;++j)
 				points[i].color[j]=pointsBuffer[i].value[j];
 			
+			/* Copy the point position: */
+			points[i].position=pointsBuffer[i];
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			for(int j=0;j<3;++j)
-				points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]-pointOffset[j]);
-			#else
-			/* Copy the points: */
-			for(int j=0;j<3;++j)
-				points[i].position[j]=Vertex::Position::Scalar(pointsBuffer[i][j]);
+			points[i].position-=pointOffset;
 			#endif
 			}
 		
 		/* Clean up: */
 		delete[] pointsBuffer;
 		}
+	}
+
+template <class VertexParam>
+inline
+void
+LidarOctree::selectCloseNeighbors(
+	LidarOctree::Node* node,
+	unsigned int left,
+	unsigned int right,
+	int splitDimension,
+	const VertexParam& point,
+	Scalar maxDist)
+	{
+	/* Calculate the index of the current point: */
+	unsigned int mid=(left+right)>>1;
+	VertexParam& np=static_cast<VertexParam*>(node->points)[mid];
+	
+	int childSplitDimension=splitDimension+1;
+	if(childSplitDimension==3)
+		childSplitDimension=0;
+	
+	/* Traverse into child closer to query point: */
+	if(point.position[splitDimension]<np.position[splitDimension])
+		{
+		/* Traverse left child: */
+		if(left<mid)
+			selectCloseNeighbors(node,left,mid-1,childSplitDimension,point,maxDist);
+		
+		/* Process the current point: */
+		if(Geometry::sqrDist(point.position,np.position)<=Math::sqr(maxDist))
+			{
+			/* Select the point: */
+			selectPoint<VertexParam>(node,mid);
+			}
+		
+		/* Traverse the right child: */
+		if(point.position[splitDimension]+maxDist>=np.position[splitDimension]&&right>mid)
+			selectCloseNeighbors(node,mid+1,right,childSplitDimension,point,maxDist);
+		}
+	else
+		{
+		/* Traverse right child: */
+		if(right>mid)
+			selectCloseNeighbors(node,mid+1,right,childSplitDimension,point,maxDist);
+		
+		/* Process the current point: */
+		if(Geometry::sqrDist(point.position,np.position)<=Math::sqr(maxDist))
+			{
+			/* Select the point: */
+			selectPoint<VertexParam>(node,mid);
+			}
+		
+		/* Traverse the left child: */
+		if(point.position[splitDimension]-maxDist<=np.position[splitDimension]&&left<mid)
+			selectCloseNeighbors(node,left,mid-1,childSplitDimension,point,maxDist);
+		}
+	}
+
+template <class VertexParam>
+inline
+void
+LidarOctree::propagateSelectedPoints(
+	LidarOctree::Node* node,
+	LidarOctree::Node* children)
+	{
+	VertexParam* nodePoints=static_cast<VertexParam*>(node->points);
+	for(int childIndex=0;childIndex<8;++childIndex)
+		if(children[childIndex].numPoints!=0)
+			{
+			VertexParam* childPoints=static_cast<VertexParam*>(children[childIndex].points);
+			
+			/* Process each selected point in the node: */
+			for(unsigned int i=0;i<node->numPoints;++i)
+				if(node->selectedPoints[i])
+					{
+					/* Select the point's close neighbors in the child node: */
+					selectCloseNeighbors<VertexParam>(&children[childIndex],0,children[childIndex].numPoints-1,0,nodePoints[i],node->detailSize);
+					}
+			}
 	}
 
 void* LidarOctree::nodeLoaderThreadMethod(void)
@@ -859,6 +970,18 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 		/* Load the node's children's point data: */
 		for(int childIndex=0;childIndex<8;++childIndex)
 			loadNodePoints(&children[childIndex]);
+		
+		{
+		Threads::Mutex::Lock nodeSelectionLock(node->selectionMutex);
+		if(node->selectedPoints!=0)
+			{
+			/* Propagate selected points from the node to its children: */
+			if(node->haveNormals)
+				propagateSelectedPoints<NVertex>(node,children);
+			else
+				propagateSelectedPoints<Vertex>(node,children);
+			}
+		}
 		
 		/* Add the new child nodes to the ready list: */
 		{
@@ -1059,6 +1182,9 @@ void LidarOctree::startRenderPass(void)
 		if(numCachedNodes+8>cacheSize)
 			{
 			/* Get the best coarsening candidate: */
+			Threads::Mutex::Lock coarseningHeapLock(coarseningHeapMutex);
+			// DEBUGGING
+			//std::cout<<coarseningHeap->getNumItems()<<std::endl;
 			Node* coarsenNode=coarseningHeap->getTopNode();
 			
 			if(coarsenNode!=0&&coarsenNode!=node->parent)
@@ -1066,6 +1192,14 @@ void LidarOctree::startRenderPass(void)
 				/* Check if subdividing the node will improve the overall tree: */
 				if(coarsenNode->renderPass<node->renderPass||(coarsenNode->renderPass==node->renderPass&&coarsenNode->maxLOD<node->maxLOD))
 					{
+					// DEBUGGING
+					/* Check if something bad happened: */
+					bool isRemovable=true;
+					for(int i=0;i<8&&isRemovable;++i)
+						isRemovable=coarsenNode->children[i].children==0&&coarsenNode->children[i].selectedPoints==0;
+					if(!isRemovable)
+						std::cout<<"Removing non-removable nodes!"<<std::endl;
+					
 					/* Delete the coarsening candidate's children: */
 					delete[] coarsenNode->children;
 					coarsenNode->children=0;
@@ -1082,7 +1216,8 @@ void LidarOctree::startRenderPass(void)
 						bool canCoarsenParent=true;
 						for(int childIndex=0;childIndex<8;++childIndex)
 							{
-							if(coarsenNode->parent->children[childIndex].children!=0)
+							Node& sibling=coarsenNode->parent->children[childIndex];
+							if(sibling.children!=0||sibling.selectedPoints!=0)
 								{
 								canCoarsenParent=false;
 								break;
@@ -1101,6 +1236,8 @@ void LidarOctree::startRenderPass(void)
 		/* Check if the node can now be subdivided: */
 		if(numCachedNodes+8<=cacheSize)
 			{
+			Threads::Mutex::Lock coarseningHeapLock(coarseningHeapMutex);
+			
 			/* Mark the node as subdivided: */
 			node->children=children;
 			
@@ -1108,8 +1245,15 @@ void LidarOctree::startRenderPass(void)
 			if(node->parent!=0&&node->parent->coarseningHeapIndex!=~0x0U)
 				coarseningHeap->remove(node->parent);
 			
-			/* Add the node to the list of coarsening candidates: */
-			coarseningHeap->insert(node);
+			/* Check if the just refined node can be coarsened again: */
+			bool canCoarsen=true;
+			for(int i=0;i<8&&canCoarsen;++i)
+				canCoarsen=node->children[i].selectedPoints==0;
+			if(canCoarsen)
+				{
+				/* Add the node to the list of coarsening candidates: */
+				coarseningHeap->insert(node);
+				}
 			
 			/* Remove all new child nodes from the node cache: */
 			for(int i=0;i<8;++i)

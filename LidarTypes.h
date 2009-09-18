@@ -44,8 +44,20 @@ struct Color // Structure for RGBA colors (compatible with OpenGL)
 	private:
 	Scalar rgba[4]; // Color components
 	
-	/* Methods: */
+	/* Constructors and destructors: */
 	public:
+	Color(void)
+		{
+		}
+	Color(Scalar r,Scalar g,Scalar b,Scalar a =255)
+		{
+		rgba[0]=r;
+		rgba[1]=g;
+		rgba[2]=b;
+		rgba[3]=a;
+		}
+	
+	/* Methods: */
 	const Scalar* getRgba(void) const // Returns color components as an array
 		{
 		return rgba;
@@ -61,6 +73,26 @@ struct Color // Structure for RGBA colors (compatible with OpenGL)
 	Scalar& operator[](int index) // Ditto
 		{
 		return rgba[index];
+		}
+	template <class SourceScalarParam>
+	static inline Scalar clampRound(SourceScalarParam value) // Rounds and clamps a source value
+		{
+		value=value<SourceScalarParam(0)?SourceScalarParam(0):value;
+		value=value>SourceScalarParam(255)?SourceScalarParam(255):value;
+		return Scalar(value+SourceScalarParam(0.5));
+		}
+	template <class SourceScalarParam>
+	void setRgb(const SourceScalarParam newRgba[3]) // Sets a color from source array, with clamping and rounding
+		{
+		for(int i=0;i<3;++i)
+			rgba[i]=clampRound(newRgba[i]);
+		rgba[3]=Scalar(255);
+		}
+	template <class SourceScalarParam>
+	void setRgba(const SourceScalarParam newRgba[4]) // Sets a color from source array, with clamping and rounding
+		{
+		for(int i=0;i<4;++i)
+			rgba[i]=clampRound(newRgba[i]);
 		}
 	};
 

@@ -85,3 +85,8 @@ LiDAR Viewer 2.3:
 LiDAR Viewer 2.4:
 - Incorporated most recent changes from development version:
   - Ability to combine LiDAR files in preprocessor
+- Added primitive to visualize strike and dip angles of a plane.
+
+LiDAR Viewer 2.5:
+- Added ability to read gzipped ASCII input files to preprocessor.
+- Bumped Vrui version requirement to 1.0-065.

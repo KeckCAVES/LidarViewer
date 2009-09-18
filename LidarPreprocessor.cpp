@@ -23,6 +23,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdlib.h>
 #include <math.h>
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <vector>
 #include <Misc/ThrowStdErr.h>
@@ -30,6 +31,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/FileNameExtensions.h>
 #include <Misc/File.h>
 #include <Misc/LargeFile.h>
+#include <Misc/FileCharacterSource.h>
+#include <Threads/GzippedFileCharacterSource.h>
+#include <Misc/ValueSource.h>
 #include <Misc/Timer.h>
 #include <Misc/StandardValueCoders.h>
 #include <Misc/ConfigurationFile.h>
@@ -63,9 +67,9 @@ void loadPointFileBin(PointAccumulator& pa,const char* fileName,const float colo
 		for(int j=0;j<3;++j)
 			p[j]=rp[j];
 		
-		/* Convert the point intensity to and RGB color according to the color mask: */
+		/* Convert the point intensity to an RGB color according to the color mask: */
 		for(int j=0;j<3;++j)
-			p.value[j]=Color::Scalar(Math::floor(rp[3]*colorMask[j]+0.5f));
+			p.value[j]=Color::clampRound(rp[3]*colorMask[j]);
 		p.value[3]=Color::Scalar(255);
 		
 		/* Store the point: */
@@ -97,7 +101,7 @@ void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float c
 		
 		/* Modify the RGB color according to the color mask: */
 		for(int j=0;j<3;++j)
-			p.value[j]=Color::Scalar(Math::floor(float(rcol[j])*colorMask[j]+0.5f));
+			p.value[j]=Color::clampRound(rcol[j]*colorMask[j]);
 		p.value[3]=Color::Scalar(255);
 		
 		/* Store the point: */
@@ -105,7 +109,7 @@ void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float c
 		}
 	}
 
-void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double lasOffset[3])
+void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the LAS input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
@@ -147,6 +151,37 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 		min[i]=file.read<double>();
 		}
 	
+	/* Check the LAS file header for sanity: */
+	switch(pointDataFormat)
+		{
+		case 0:
+			if(pointDataRecordLength!=20)
+				return;
+			break;
+		
+		case 1:
+			if(pointDataRecordLength!=28)
+				return;
+			break;
+		
+		case 2:
+			if(pointDataRecordLength!=26)
+				return;
+			break;
+		
+		case 3:
+			if(pointDataRecordLength!=34)
+				return;
+			break;
+		
+		default:
+			return;
+		}
+	
+	/* Apply the LAS offset: */
+	for(int i=0;i<3;++i)
+		offset[i]+=pointOffset[i];
+	
 	/* Read all points: */
 	file.seekSet(pointDataOffset);
 	for(size_t i=0;i<numPointRecords;++i)
@@ -158,91 +193,176 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 		int pos[3];
 		file.read(pos,3);
 		for(int j=0;j<3;++j)
-			p[j]=float(double(pos[j])*scale[j]+offset[j]-lasOffset[j]);
+			p[j]=float(double(pos[j])*scale[j]+offset[j]);
 		
 		/* Read the point intensity: */
 		float intensity=float(file.read<unsigned short>());
-		for(int j=0;j<3;++j)
-			p.value[j]=Color::Scalar(Math::floor(intensity*colorMask[j]+0.5f));
-		p.value[3]=Color::Scalar(255);
 		
-		/* Ignore the rest of the point record: */
+		/* Skip irrelevant information: */
 		char dummy[4];
 		file.read(dummy,4);
 		file.read<unsigned short>();
-		if(pointDataFormat==1)
+		if(pointDataFormat&0x1)
 			file.read<double>();
+		if(pointDataFormat>=2)
+			{
+			/* Assign point color from stored RGB data: */
+			unsigned short rgb[3];
+			file.read(rgb,3);
+			for(int j=0;j<3;++j)
+				p.value[j]=Color::clampRound(rgb[j]*colorMask[j]);
+			}
+		else
+			{
+			/* Assign point color from intensity: */
+			for(int j=0;j<3;++j)
+				p.value[j]=Color::clampRound(intensity*colorMask[j]);
+			}
+		p.value[3]=Color::Scalar(255);
 		
 		/* Store the point: */
 		pa.addPoint(p);
 		}
 	}
 
-void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
+	Threads::GzippedFileCharacterSource file(fileName);
+	Misc::ValueSource reader(file);
+	reader.setPunctuation('#',true);
+	reader.setPunctuation('\n',true);
+	reader.skipWs();
 	
 	/* Read all lines from the input file: */
-	while(!file.eof())
+	LidarPoint::Scalar pMin[3],pMax[3];
+	for(int i=0;i<3;++i)
 		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Skip comment lines: */
-		if(line[0]=='#')
-			continue;
-		
-		/* Parse the point coordinates and intensity from the line: */
-		LidarPoint p;
-		float intensity;
-		if(sscanf(line,"%f %f %f %f",&p[0],&p[1],&p[2],&intensity)==4)
-			{
-			/* Convert the read intensity to an RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=Color::Scalar(Math::floor(intensity*colorMask[i]+0.5f));
-			p.value[3]=Color::Scalar(255);
-			
-			/* Store the point: */
-			pa.addPoint(p);
-			}
+		pMin[i]=Math::Constants<LidarPoint::Scalar>::max;
+		pMax[i]=Math::Constants<LidarPoint::Scalar>::min;
 		}
+	float intensityMin=Math::Constants<float>::max;
+	float intensityMax=Math::Constants<float>::min;
+	size_t lineNumber=1;
+	while(!reader.eof())
+		{
+		/* Check for comment or empty lines: */
+		if(reader.peekc()!='#'&&reader.peekc()!='\n')
+			{
+			try
+				{
+				/* Parse the point coordinates and intensity from the line: */
+				LidarPoint p;
+				for(int i=0;i<3;++i)
+					{
+					p[i]=LidarPoint::Scalar(reader.readNumber()+pointOffset[i]);
+					if(pMin[i]>p[i])
+						pMin[i]=p[i];
+					if(pMax[i]<p[i])
+						pMax[i]=p[i];
+					}
+				float intensity=float(reader.readNumber());
+				if(intensityMin>intensity)
+					intensityMin=intensity;
+				if(intensityMax<intensity)
+					intensityMax=intensity;
+				
+				/* Convert the read intensity to an RGB color according to the color mask: */
+				for(int i=0;i<3;++i)
+					p.value[i]=Color::clampRound(intensity*colorMask[i]);
+				p.value[3]=Color::Scalar(255);
+				
+				/* Store the point: */
+				pa.addPoint(p);
+				}
+			catch(Misc::ValueSource::NumberError err)
+				{
+				std::cerr<<"loadPointFileXyzi: Point parsing error in line "<<lineNumber<<std::endl;
+				}
+			}
+		
+		/* Skip the rest of the line: */
+		reader.skipLine();
+		++lineNumber;
+		reader.skipWs();
+		}
+	
+	std::cout.setf(std::ios::fixed);
+	std::cout<<std::setprecision(6);
+	std::cout<<"Bounding box: ["<<pMin[0]<<", "<<pMax[0]<<"] x ["<<pMin[1]<<", "<<pMax[1]<<"] x ["<<pMin[2]<<", "<<pMax[2]<<"]"<<std::endl;
+	std::cout<<"Intensity range: "<<intensityMin<<", "<<intensityMax<<std::endl;
 	}
 
-void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
+	Threads::GzippedFileCharacterSource file(fileName);
+	Misc::ValueSource reader(file);
+	reader.setPunctuation('#',true);
+	reader.setPunctuation('\n',true);
+	reader.skipWs();
 	
 	/* Read all lines from the input file: */
-	while(!file.eof())
+	LidarPoint::Scalar pMin[3],pMax[3];
+	float rgbMin[3],rgbMax[3];
+	for(int i=0;i<3;++i)
 		{
-		/* Read the next line from the file: */
-		char line[256];
-		file.gets(line,sizeof(line));
-		
-		/* Skip comment lines: */
-		if(line[0]=='#')
-			continue;
-		
-		/* Parse the point coordinates and RGB color from the line: */
-		LidarPoint p;
-		float rgb[3];
-		if(sscanf(line,"%f %f %f %f %f %f",&p[0],&p[1],&p[2],&rgb[0],&rgb[1],&rgb[2])==6)
-			{
-			/* Process the RGB color according to the color mask: */
-			for(int i=0;i<3;++i)
-				p.value[i]=Color::Scalar(Math::floor(rgb[i]*colorMask[i]+0.5f));
-			p.value[3]=Color::Scalar(255);
-			
-			/* Store the point: */
-			pa.addPoint(p);
-			}
+		pMin[i]=Math::Constants<LidarPoint::Scalar>::max;
+		pMax[i]=Math::Constants<LidarPoint::Scalar>::min;
+		rgbMin[i]=Math::Constants<float>::max;
+		rgbMax[i]=Math::Constants<float>::min;
 		}
+	size_t lineNumber=1;
+	while(!reader.eof())
+		{
+		/* Check for comment or empty lines: */
+		if(reader.peekc()!='#'&&reader.peekc()!='\n')
+			{
+			try
+				{
+				/* Parse the point coordinates and color from the line: */
+				LidarPoint p;
+				for(int i=0;i<3;++i)
+					{
+					p[i]=LidarPoint::Scalar(reader.readNumber()+pointOffset[i]);
+					if(pMin[i]>p[i])
+						pMin[i]=p[i];
+					if(pMax[i]<p[i])
+						pMax[i]=p[i];
+					}
+				for(int i=0;i<3;++i)
+					{
+					float col=float(reader.readNumber())*colorMask[i];
+					if(rgbMin[i]<col)
+						rgbMin[i]=col;
+					if(rgbMax[i]>col)
+						rgbMax[i]=col;
+					p.value[i]=Color::clampRound(col);
+					}
+				p.value[3]=Color::Scalar(255);
+				
+				/* Store the point: */
+				pa.addPoint(p);
+				}
+			catch(Misc::ValueSource::NumberError err)
+				{
+				std::cerr<<"loadPointFileXyzrgb: Point parsing error in line "<<lineNumber<<std::endl;
+				}
+			}
+		
+		/* Skip the rest of the line: */
+		reader.skipLine();
+		++lineNumber;
+		reader.skipWs();
+		}
+	
+	std::cout.setf(std::ios::fixed);
+	std::cout<<std::setprecision(6);
+	std::cout<<"Bounding box: ["<<pMin[0]<<", "<<pMax[0]<<"] x ["<<pMin[1]<<", "<<pMax[1]<<"] x ["<<pMin[2]<<", "<<pMax[2]<<"]"<<std::endl;
+	std::cout<<"RGB range: ["<<rgbMin[0]<<", "<<rgbMax[0]<<"] x ["<<rgbMin[1]<<", "<<rgbMax[1]<<"] x ["<<rgbMin[2]<<", "<<rgbMax[2]<<"]"<<std::endl;
 	}
 
-void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,bool strictCsv,bool rgb,const int columnIndices[6],const float colorMask[3])
+void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,int numHeaderLines,bool strictCsv,bool rgb,const int columnIndices[6],const float colorMask[3])
 	{
 	/* Create the mapping from column indices to point components: */
 	int maxColumnIndex=columnIndices[0];
@@ -259,124 +379,99 @@ void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,bool st
 			componentColumnIndices[columnIndices[i]]=i;
 			++numComponents;
 			}
+	double* componentValues=new double[numComponents];
 	
 	/* Open the ASCII input file: */
-	Misc::File file(fileName,"rt");
+	Threads::GzippedFileCharacterSource file(fileName);
+	Misc::ValueSource reader(file);
+	if(strictCsv)
+		reader.setWhitespace("");
+	reader.setPunctuation("#,\n");
+	reader.skipWs();
+	size_t lineNumber=1;
+	
+	/* Skip the header lines: */
+	for(int i=0;i<numHeaderLines;++i)
+		{
+		reader.skipLine();
+		reader.skipWs();
+		++lineNumber;
+		}
 	
 	/* Read all lines from the input file: */
 	float intensityMin=Math::Constants<float>::max;
 	float intensityMax=Math::Constants<float>::min;
-	char line[256];
-	while(!file.eof())
+	try
 		{
-		/* Read the next line from the file: */
-		file.gets(line,sizeof(line));
-		
-		/* Separate and parse the columns: */
-		int numParsedColumns=0;
-		float componentValues[4];
-		componentValues[3]=255.0f;
-		char* columnStart=line;
-		for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
+		while(!reader.eof())
 			{
-			/* Skip whitespace: */
-			while(*columnStart!='\0'&&isspace(*columnStart))
-				++columnStart;
-			
-			/* Stop if end of line is reached: */
-			if(*columnStart=='\0')
-				break;
-			
-			/* Find the start and end of the current column's value: */
-			char* valueStart;
-			char* valueEnd;
-			char* columnEnd;
-			if(*columnStart=='\"')
+			/* Check for comments or empty lines: */
+			if(reader.peekc()!='#'&&reader.peekc()!='\n')
 				{
-				/* Process a quoted value: */
-				valueStart=columnStart+1;
-				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!='\"';++valueEnd)
-					;
-				columnEnd=valueEnd;
-				if(*columnEnd=='\"')
-					++columnEnd;
-				}
-			else if(strictCsv)
-				{
-				/* Process an unquoted value according to strict CSV file rules: */
-				valueStart=columnStart;
-				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!=',';++valueEnd)
-					;
-				columnEnd=valueEnd;
-				}
-			else
-				{
-				/* Process an unquoted value according to relaxed CSV / space-separated rules: */
-				valueStart=columnStart;
-				for(valueEnd=valueStart;*valueEnd!='\0'&&*valueEnd!=','&&!isspace(*valueEnd);++valueEnd)
-					;
-				columnEnd=valueEnd;
-				}
-			
-			/* Process the value if needed: */
-			if(componentColumnIndices[columnIndex]>=0)
-				{
-				/* Process the value and check if anything was processed: */
-				char* conversionEnd;
-				componentValues[componentColumnIndices[columnIndex]]=strtof(valueStart,&conversionEnd);
-				if(conversionEnd!=valueStart)
-					++numParsedColumns;
-				}
-			
-			/* Find the end of the column: */
-			while(*columnEnd!='\0'&&isspace(*columnEnd))
-				++columnEnd;
-			
-			/* Skip a potential separating comma: */
-			if(*columnEnd==',')
-				++columnEnd;
-			
-			/* Go to the next column: */
-			columnStart=columnEnd;
-			}
-		
-		/* Check if all required columns have been read: */
-		if(numParsedColumns==numComponents)
-			{
-			/* Store the point position: */
-			LidarPoint p;
-			for(int i=0;i<3;++i)
-				p[i]=componentValues[i];
-			
-			if(rgb)
-				{
-				/* Modify the read RGB color according to the color mask: */
-				for(int i=0;i<3;++i)
+				/* Read all columns: */
+				for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
 					{
-					p.value[i]=Color::Scalar(Math::floor(componentValues[3+i]*colorMask[i]+0.5f));
-					if(intensityMin>componentValues[3+i])
-						intensityMin=componentValues[3+i];
-					if(intensityMax<componentValues[3+i])
-						intensityMax=componentValues[3+i];
+					if(componentColumnIndices[columnIndex]>=0)
+						{
+						/* Read the next value: */
+						componentValues[componentColumnIndices[columnIndex]]=reader.readNumber();
+						}
+					else
+						reader.skipString();
+
+					if(columnIndex<maxColumnIndex)
+						{
+						/* Check for separator: */
+						if(reader.peekc()==',')
+							reader.skipString();
+						}
 					}
-				}
-			else
-				{
-				/* Convert the read intensity to an RGB color according to the color mask: */
+
+				/* Store the point position: */
+				LidarPoint p;
 				for(int i=0;i<3;++i)
-					p.value[i]=Color::Scalar(Math::floor(componentValues[3]*colorMask[i]+0.5f));
-				
-				if(intensityMin>componentValues[3])
-					intensityMin=componentValues[3];
-				if(intensityMax<componentValues[3])
-					intensityMax=componentValues[3];
+					p[i]=componentValues[i];
+
+				if(rgb)
+					{
+					/* Modify the read RGB color according to the color mask: */
+					for(int i=0;i<3;++i)
+						{
+						p.value[i]=Color::clampRound(componentValues[3+i]*colorMask[i]);
+						if(intensityMin>componentValues[3+i])
+							intensityMin=componentValues[3+i];
+						if(intensityMax<componentValues[3+i])
+							intensityMax=componentValues[3+i];
+						}
+					}
+				else
+					{
+					/* Convert the read intensity to an RGB color according to the color mask: */
+					for(int i=0;i<3;++i)
+						p.value[i]=Color::clampRound(componentValues[3]*colorMask[i]);
+
+					if(intensityMin>componentValues[3])
+						intensityMin=componentValues[3];
+					if(intensityMax<componentValues[3])
+						intensityMax=componentValues[3];
+					}
+				p.value[3]=Color::Scalar(255);
+
+				/* Store the point: */
+				pa.addPoint(p);
 				}
-			p.value[3]=Color::Scalar(255);
-			
-			/* Store the point: */
-			pa.addPoint(p);
+
+			/* Skip to the next line: */
+			reader.skipLine();
+			reader.skipWs();
+			++lineNumber;
 			}
 		}
+	catch(std::runtime_error err)
+		{
+		std::cerr<<"Caught exception "<<err.what()<<" in line "<<lineNumber<<" in input file "<<fileName<<std::endl;
+		}
+	
 	if(rgb)
 		std::cout<<"Point data RGB component range: "<<intensityMin<<", "<<intensityMax<<std::endl;
 	else
@@ -384,6 +479,7 @@ void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,bool st
 	
 	/* Clean up: */
 	delete[] componentColumnIndices;
+	delete[] componentValues;
 	}
 
 /**********************************
@@ -557,12 +653,7 @@ void loadPointFileIdl(PointAccumulator& pa,const char* fileName,const float colo
 				rgbMin[j]=rgb[j];
 			if(rgbMax[j]<rgb[j])
 				rgbMax[j]=rgb[j];
-			if(rgb[j]<0.5f)
-				p.value[j]=Color::Scalar(0);
-			else if(rgb[j]>=254.5f)
-				p.value[j]=Color::Scalar(255);
-			else
-				p.value[j]=Color::Scalar(Math::floor(rgb[j]+0.5f));
+			p.value[j]=Color::clampRound(rgb[j]);
 			}
 		p.value[3]=Color::Scalar(255);
 		
@@ -804,6 +895,7 @@ int main(int argc,char* argv[])
 	float colorMask[3]={1.0f,1.0f,1.0f};
 	int asciiColumnIndices[6];
 	double lasOffset[3]={0.0,0.0,0.0};
+	int numHeaderLines=0;
 	bool havePoints=false;
 	
 	/* Parse the command line and load all input files: */
@@ -909,6 +1001,11 @@ int main(int argc,char* argv[])
 					++i;
 					lasOffset[j]=atof(argv[i]);
 					}
+				}
+			else if(strcasecmp(argv[i]+1,"header")==0)
+				{
+				++i;
+				numHeaderLines=atof(argv[i]);
 				}
 			else if(strcasecmp(argv[i]+1,"xyzi")==0)
 				pointFileType=XYZI;
@@ -1019,42 +1116,42 @@ int main(int argc,char* argv[])
 				
 				case XYZI:
 					std::cout<<"Processing XYZI input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileXyzi(pa,argv[i],colorMask);
+					loadPointFileXyzi(pa,argv[i],colorMask,lasOffset);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case XYZRGB:
 					std::cout<<"Processing XYZRGB input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileXyzrgb(pa,argv[i],colorMask);
+					loadPointFileXyzrgb(pa,argv[i],colorMask,lasOffset);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case ASCII:
 					std::cout<<"Processing generic ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericASCII(pa,argv[i],false,false,asciiColumnIndices,colorMask);
+					loadPointFileGenericASCII(pa,argv[i],numHeaderLines,false,false,asciiColumnIndices,colorMask);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case ASCIIRGB:
 					std::cout<<"Processing generic RGB ASCII input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericASCII(pa,argv[i],false,true,asciiColumnIndices,colorMask);
+					loadPointFileGenericASCII(pa,argv[i],numHeaderLines,false,true,asciiColumnIndices,colorMask);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case CSV:
 					std::cout<<"Processing generic CSV input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericASCII(pa,argv[i],true,false,asciiColumnIndices,colorMask);
+					loadPointFileGenericASCII(pa,argv[i],numHeaderLines,true,false,asciiColumnIndices,colorMask);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
 				
 				case CSVRGB:
 					std::cout<<"Processing generic RGB CSV input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileGenericASCII(pa,argv[i],true,true,asciiColumnIndices,colorMask);
+					loadPointFileGenericASCII(pa,argv[i],numHeaderLines,true,true,asciiColumnIndices,colorMask);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
@@ -1090,7 +1187,7 @@ int main(int argc,char* argv[])
 	if(outputFileName==0)
 		{
 		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> -np <max points per node> <input file spec 1> ... <input file spec n>"<<std::endl;
-		std::cerr<<"Input file spec: [-c <red> <green> <blue>] <format spec> <file name>"<<std::endl;
+		std::cerr<<"Input file spec: [-c <red> <green> <blue>] [-header <number of header lines>] <format spec> <file name>"<<std::endl;
 		std::cerr<<"Format spec: -AUTO"<<std::endl;
 		std::cerr<<"             -BIN"<<std::endl;
 		std::cerr<<"             -BINRGB"<<std::endl;

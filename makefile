@@ -141,11 +141,13 @@ LidarIlluminator: $(BINDIR)/LidarIlluminator
 LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       LidarTool.cpp \
                       PlanePrimitive.cpp \
+                      BruntonPrimitive.cpp \
                       LinePrimitive.cpp \
                       PointPrimitive.cpp \
                       SpherePrimitive.cpp \
                       CylinderPrimitive.cpp \
                       PointBasedLightingShader.cpp \
+                      SceneGraph.cpp \
                       LidarViewer.cpp
 
 $(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'

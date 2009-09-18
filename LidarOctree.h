@@ -30,9 +30,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Threads/Thread.h>
 #include <GL/gl.h>
 #include <GL/GLColor.h>
-#define NONSTANDARD_GLVERTEX_TEMPLATES
-#include <GL/GLVertex.h>
 #include <GL/GLObject.h>
+#define NONSTANDARD_GLVERTEX_TEMPLATES
+#include <GL/GLGeometryVertex.h>
 
 #include "LidarTypes.h"
 #include "Cube.h"
@@ -74,11 +74,11 @@ class LidarOctree:public GLObject
 	typedef std::vector<Interactor> InteractorList; // Type for lists of interactors
 	typedef Geometry::Ray<Scalar,3> Ray; // Type for rays for intersection tests
 	typedef GLFrustum<Scalar> Frustum; // Data type to represent view frusta
+	typedef GLColor<GLubyte,4> Color; // Type for point colors
 	
 	private:
-	typedef GLColor<GLubyte,4> Color; // Type for point colors
-	typedef GLVertex<void,0,GLubyte,4,void,float,3> Vertex; // Type for rendered points
-	typedef GLVertex<void,0,GLubyte,4,float,float,3> NVertex; // Type for rendered points with normal vectors
+	typedef GLGeometry::Vertex<void,0,GLubyte,4,void,float,3> Vertex; // Type for rendered points
+	typedef GLGeometry::Vertex<void,0,GLubyte,4,float,float,3> NVertex; // Type for rendered points with normal vectors
 	
 	struct Node // Structure for Octree nodes
 		{
@@ -95,6 +95,7 @@ class LidarOctree:public GLObject
 		Scalar detailSize; // Detail size of this node, for proper LOD computation
 		void* points; // Pointer to the LiDAR points belonging to this node
 		unsigned int pointsVersion; // Version counter for points array to invalidate render cache on changes
+		Threads::Mutex selectionMutex; // Mutex protecting the node's selection state
 		bool* selectedPoints; // Array holding flags for selected points
 		Vertex::Color* selectedPointColors; // Array holding the original colors of selected points
 		
@@ -216,15 +217,25 @@ class LidarOctree:public GLObject
 	void renderSubTree(const Node* node,const Frustum& frustum,DataItem* dataItem) const;
 	void interactWithSubTree(Node* node,const Interactor& interactor); // Prepares a subtree for interaction with an interactor
 	template <class VertexParam>
+	bool selectPoint(Node* node,unsigned int pointIndex); // Selects the given point in the given node; returns true if selection changed
+	template <class VertexParam>
 	void selectPointsInNode(Node* node,const Interactor& interactor); // Selects points in the given node
 	void selectPoints(Node* node,const Interactor& interactor); // Selects points in the given subtree
 	template <class VertexParam>
 	void deselectPointsInNode(Node* node,const Interactor& interactor); // Deselects points in the given node
-	void deselectPoints(Node* node,const Interactor& interactor); // Deselects points in the given subtree
-	void clearSelection(Node* node); // Clears selected points in the given subtree
+	bool deselectPoints(Node* node,const Interactor& interactor); // Deselects points in the given subtree; returns true if node is removable (i.e., has no children or selected points)
+	bool clearSelection(Node* node); // Clears selected points in the given subtree; returns true if node is removable (i.e., has no children or selected points)
+	template <class VertexParam,class DirectedPointProcessorParam>
+	void processPointsDirected(const Node* node,DirectedPointProcessorParam& dpp) const; // Processes points in the given subtree in order of increasing distance from the processor's query point
 	template <class VertexParam,class PointProcessorParam>
-	void processSelectedPoints(const Node* node,PointProcessorParam& pp) const; // Processes points in the given subtree
+	void processSelectedPoints(const Node* node,PointProcessorParam& pp) const; // Processes selected points in the given subtree
+	template <class VertexParam,class ColoringPointProcessorParam>
+	void colorSelectedPoints(Node* node,ColoringPointProcessorParam& cpp); // Colors selected points in the given subtree
 	void loadNodePoints(Node* node); // Loads the point array of the given node
+	template <class VertexParam>
+	void selectCloseNeighbors(Node* node,unsigned int left,unsigned int right,int splitDimension,const VertexParam& point,Scalar maxDist);
+	template <class VertexParam>
+	void propagateSelectedPoints(Node* node,Node* children); // Propagates selected points from the given node into its just loaded child nodes
 	void* nodeLoaderThreadMethod(void); // Thread method to subdivide octree nodes without interrupting rendering
 	
 	/* Constructors and destructors: */
@@ -254,6 +265,15 @@ class LidarOctree:public GLObject
 	void selectPoints(const Interactor& interactor); // Selects all points inside the interactor's region of influence
 	void deselectPoints(const Interactor& interactor); // Deselects all points inside the interactor's region of influence
 	void clearSelection(void); // Clears the set of selected points
+	template <class DirectedPointProcessorParam>
+	void processPointsDirected(DirectedPointProcessorParam& dpp) const // Processes points in leaf nodes in order of approximately increasing distance from the processor's query point
+		{
+		/* Process nodes from the root: */
+		if(root.haveNormals)
+			processPointsDirected<NVertex,DirectedPointProcessorParam>(&root,dpp);
+		else
+			processPointsDirected<Vertex,DirectedPointProcessorParam>(&root,dpp);
+		}
 	template <class PointProcessorParam>
 	void processSelectedPoints(PointProcessorParam& pp) const // Processes the set of selected points in leaf nodes with the given point processor
 		{
@@ -262,6 +282,15 @@ class LidarOctree:public GLObject
 			processSelectedPoints<NVertex,PointProcessorParam>(&root,pp);
 		else
 			processSelectedPoints<Vertex,PointProcessorParam>(&root,pp);
+		};
+	template <class ColoringPointProcessorParam>
+	void colorSelectedPoints(ColoringPointProcessorParam& cpp) // Ditto, but allows point processor to change the selection color of selected points
+		{
+		/* Process nodes from the root: */
+		if(root.haveNormals)
+			colorSelectedPoints<NVertex,ColoringPointProcessorParam>(&root,cpp);
+		else
+			colorSelectedPoints<Vertex,ColoringPointProcessorParam>(&root,cpp);
 		};
 	};
 

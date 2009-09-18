@@ -281,7 +281,8 @@ std::string PointBasedLightingShader::createApplyLightFunction(const char* funct
 	}
 
 PointBasedLightingShader::PointBasedLightingShader(void)
-	:lightStates(0),
+	:colorMaterial(false),
+	 lightStates(0),
 	 vertexShader(0),fragmentShader(0),
 	 programObject(0)
 	{

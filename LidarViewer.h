@@ -164,6 +164,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	Vrui::Scalar brushSize; // Default physical-coordinate size for new interaction brushes
 	GLColor<GLfloat,4> brushColor; // Color to render selection brush, with transparency
 	SelectorLocator::SelectorMode defaultSelectorMode; // Selection mode for new selector locators
+	Scalar neighborhoodSize; // Size of neighborhood for point classification
 	LocatorList locators; // List of currently existing locators
 	Comm::MulticastPipe* extractorPipe; // Pipe to synchronize feature extraction on a distributed rendering cluster
 	GLColor<GLfloat,4> primitiveColor; // Color to render primitives, with transparency
@@ -192,6 +193,8 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::RadioBox* interactionDialogSelectorModes;
 	GLMotif::TextField* brushSizeValue;
 	GLMotif::Slider* brushSizeSlider;
+	GLMotif::TextField* neighborhoodSizeValue;
+	GLMotif::Slider* neighborhoodSizeSlider;
 	
 	/* Private methods: */
 	GLMotif::Popup* createSelectorModesMenu(void);
@@ -226,9 +229,11 @@ class LidarViewer:public Vrui::Application,public GLObject
 	virtual void display(GLContextData& contextData) const;
 	void centerDisplayCallback(Misc::CallbackData* cbData);
 	void changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData);
+	void classifySelectionCallback(Misc::CallbackData* cbData);
 	void saveSelectionCallback(Misc::CallbackData* cbData);
 	void clearSelectionCallback(Misc::CallbackData* cbData);
 	void extractPlaneCallback(Misc::CallbackData* cbData);
+	void extractBruntonCallback(Misc::CallbackData* cbData);
 	void extractSphereCallback(Misc::CallbackData* cbData);
 	void extractCylinderCallback(Misc::CallbackData* cbData);
 	void intersectPrimitivesCallback(Misc::CallbackData* cbData);
@@ -250,6 +255,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void neighborhoodSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
 	void updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	};
 

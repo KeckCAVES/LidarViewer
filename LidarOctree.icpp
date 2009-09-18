@@ -30,6 +30,47 @@ Methods of class LidarOctree:
 
 template <class VertexParam>
 inline
+bool
+LidarOctree::selectPoint(
+	LidarOctree::Node* node,
+	unsigned int pointIndex)
+	{
+	/* Create a selection mask if there is none already: */
+	if(node->selectedPoints==0)
+		{
+		node->selectedPoints=new bool[maxNumPointsPerNode];
+		for(unsigned int i=0;i<node->numPoints;++i)
+			node->selectedPoints[i]=false;
+		node->selectedPointColors=new Vertex::Color[maxNumPointsPerNode];
+		}
+	
+	/* Select this point: */
+	if(!node->selectedPoints[pointIndex])
+		{
+		node->selectedPoints[pointIndex]=true;
+		Vertex::Color& col=static_cast<VertexParam*>(node->points)[pointIndex].color;
+		node->selectedPointColors[pointIndex]=col;
+		float intensity=float(col[0])*0.299f+float(col[1])*0.587f+float(col[2])*0.114f;
+		if(intensity<127.5f)
+			{
+			col[0]=GLubyte(0);
+			col[1]=GLubyte(intensity+127.5f);
+			col[2]=GLubyte(0);
+			}
+		else
+			{
+			col[0]=GLubyte(intensity-127.5f);
+			col[1]=GLubyte(255);
+			col[2]=GLubyte(intensity-127.5f);
+			}
+		return true;
+		}
+	else
+		return false;
+	}
+
+template <class VertexParam>
+inline
 void
 LidarOctree::selectPointsInNode(
 	LidarOctree::Node* node,
@@ -37,43 +78,15 @@ LidarOctree::selectPointsInNode(
 	{
 	/* Select all points inside the interactor's region of influence in this node: */
 	bool pointsChanged=false;
-	VertexParam* points=reinterpret_cast<VertexParam*>(node->points);
+	VertexParam* points=static_cast<VertexParam*>(node->points);
 	Scalar ir2=Math::sqr(interactor.radius);
 	for(unsigned int i=0;i<node->numPoints;++i)
 		{
-		Scalar pdist2=Geometry::sqrDist(interactor.center,Point(points[i].position.getXyzw()));
+		Scalar pdist2=Geometry::sqrDist(interactor.center,points[i].position);
 		if(pdist2<ir2)
 			{
-			/* Create a selection mask if there is none already: */
-			if(node->selectedPoints==0)
-				{
-				node->selectedPoints=new bool[maxNumPointsPerNode];
-				for(unsigned int i=0;i<node->numPoints;++i)
-					node->selectedPoints[i]=false;
-				node->selectedPointColors=new Vertex::Color[maxNumPointsPerNode];
-				}
-			
-			/* Select this point: */
-			if(!node->selectedPoints[i])
-				{
-				node->selectedPoints[i]=true;
-				Vertex::Color& col=points[i].color;
-				node->selectedPointColors[i]=col;
-				float intensity=float(col[0])*0.299f+float(col[1])*0.587f+float(col[2])*0.114f;
-				if(intensity<127.5f)
-					{
-					col[0]=GLubyte(0);
-					col[1]=GLubyte(intensity+127.5f);
-					col[2]=GLubyte(0);
-					}
-				else
-					{
-					col[0]=GLubyte(intensity-127.5f);
-					col[1]=GLubyte(255);
-					col[2]=GLubyte(intensity-127.5f);
-					}
-				pointsChanged=true;
-				}
+			/* Select the point: */
+			pointsChanged=selectPoint<VertexParam>(node,i)||pointsChanged;
 			}
 		}
 	
@@ -92,11 +105,11 @@ LidarOctree::deselectPointsInNode(
 	/* Deselect all points inside the interactor's region of influence in this node: */
 	bool pointsChanged=false;
 	bool hasSelectedPoints=false;
-	VertexParam* points=reinterpret_cast<VertexParam*>(node->points);
+	VertexParam* points=static_cast<VertexParam*>(node->points);
 	Scalar ir2=Math::sqr(interactor.radius);
 	for(unsigned int i=0;i<node->numPoints;++i)
 		{
-		Scalar pdist2=Geometry::sqrDist(interactor.center,Point(points[i].position.getXyzw()));
+		Scalar pdist2=Geometry::sqrDist(interactor.center,points[i].position);
 		if(pdist2<ir2)
 			{
 			/* Deselect this point: */
@@ -124,6 +137,171 @@ LidarOctree::deselectPointsInNode(
 		++node->pointsVersion;
 	}
 
+namespace {
+
+/*******************************************************************
+Helper function to traverse points inside a leaf node of the octree:
+*******************************************************************/
+
+template <class VertexParam,class DirectedProcessFunctorParam>
+inline
+void
+processPointsDirectedKdtree(
+	const VertexParam* points,
+	const typename VertexParam::Color* colors,
+	unsigned int left,
+	unsigned int right,
+	unsigned int splitDimension,
+	DirectedProcessFunctorParam& dpp)
+	{
+	/* Calculate the index of this kd-tree node: */
+	unsigned int mid=(left+right)>>1;
+	
+	unsigned int childSplitDimension=splitDimension+1;
+	if(childSplitDimension==3)
+		childSplitDimension=0;
+	
+	/* Traverse into child closer to query point: */
+	if(dpp.getQueryPoint()[splitDimension]<points[mid].position[splitDimension])
+		{
+		/* Traverse left child: */
+		if(left<mid)
+			processPointsDirectedKdtree(points,colors,left,mid-1,childSplitDimension,dpp);
+		
+		/* Process the point's original LiDAR value: */
+		LidarPoint lp=points[mid].position;
+		if(colors!=0)
+			{
+			for(int j=0;j<4;++j)
+				lp.value[j]=colors[mid][j];
+			}
+		else
+			{
+			for(int j=0;j<4;++j)
+				lp.value[j]=points[mid].color[j];
+			}
+		dpp(lp);
+		
+		/* Traverse right child: */
+		if(right>mid&&Math::sqr(dpp.getQueryPoint()[splitDimension]-points[mid].position[splitDimension])<=dpp.getQueryRadius2())
+			processPointsDirectedKdtree(points,colors,mid+1,right,childSplitDimension,dpp);
+		}
+	else
+		{
+		/* Traverse right child: */
+		if(right>mid)
+			processPointsDirectedKdtree(points,colors,mid+1,right,childSplitDimension,dpp);
+		
+		/* Process the point's original LiDAR value: */
+		LidarPoint lp=points[mid].position;
+		if(colors!=0)
+			{
+			for(int j=0;j<4;++j)
+				lp.value[j]=colors[mid][j];
+			}
+		else
+			{
+			for(int j=0;j<4;++j)
+				lp.value[j]=points[mid].color[j];
+			}
+		dpp(lp);
+		
+		/* Traverse left child: */
+		if(left<mid&&Math::sqr(dpp.getQueryPoint()[splitDimension]-points[mid].position[splitDimension])<=dpp.getQueryRadius2())
+			processPointsDirectedKdtree(points,colors,left,mid-1,childSplitDimension,dpp);
+		}
+	}
+
+}
+
+template <class VertexParam,class DirectedPointProcessorParam>
+inline
+void
+LidarOctree::processPointsDirected(
+	const LidarOctree::Node* node,
+	DirectedPointProcessorParam& dpp) const
+	{
+	/* Check if the node is a leaf node in the current in-memory tree: */
+	if(node->children==0)
+		{
+		/* Process all points in the node: */
+		if(node->numPoints>0)
+			{
+			const VertexParam* points=static_cast<const VertexParam*>(node->points);
+			processPointsDirectedKdtree<VertexParam,DirectedPointProcessorParam>(points,node->selectedPointColors,0,node->numPoints-1,0,dpp);
+			}
+		}
+	else
+		{
+		/*****************************************************************
+		The following code is quite dense. The first loop finds the index
+		of the child node that contains the query point, and the second
+		loop traverses the child nodes in order of increasing distance
+		from the query point by using bit index magic with XOR. The
+		distance calculation only adds up distances along those axes where
+		the query point and the child node are on different sides of the
+		node's splitting planes. As a result, it calculates the actual
+		(squared) Minkowski distance from the node's domain to the query
+		point. It is recommended to make a diagram and work through the
+		code to actually understand what happens here.
+		*****************************************************************/
+		
+		/* Find child node containing query point: */
+		int queryChildIndex=0x0;
+		Scalar dist2s[3];
+		for(int i=0;i<3;++i)
+			{
+			Scalar dist=dpp.getQueryPoint()[i]-node->domain.getCenter(i);
+			if(dist>=Scalar(0))
+				queryChildIndex|=0x1<<i;
+			dist2s[i]=Math::sqr(dist);
+			}
+		
+		/* Calculate the traversal order: */
+		int traversalOrder=0;
+		if(dist2s[0]<=dist2s[1])
+			{
+			if(dist2s[1]<=dist2s[2])
+				traversalOrder=0;
+			else if(dist2s[0]<=dist2s[2])
+				traversalOrder=1;
+			else
+				traversalOrder=4;
+			}
+		else
+			{
+			if(dist2s[1]>dist2s[2])
+				traversalOrder=5;
+			else if(dist2s[0]>dist2s[2])
+				traversalOrder=3;
+			else
+				traversalOrder=2;
+			}
+		
+		/* Recurse into the node's children: */
+		static const int childOrders[6][8]=
+			{
+			{0,1,2,3,4,5,6,7}, // Flip x, then y, then z
+			{0,1,4,5,2,3,6,7}, // Flip x, then z, then y
+			{0,2,1,3,4,6,5,7}, // Flip y, then x, then z
+			{0,2,4,6,1,3,5,7}, // Flip y, then z, then x
+			{0,4,1,5,2,6,3,7}, // Flip z, then x, then y
+			{0,4,2,6,1,5,3,7}, // Flip z, then y, then x
+			};
+		
+		for(int ci=0;ci<8;++ci)
+			{
+			/* Get the index of the child node actually entered: */
+			int childIndex=childOrders[traversalOrder][ci];
+			const Node* child=&node->children[childIndex^queryChildIndex];
+			
+			/* Enter the child node if it overlaps the query sphere: */
+			if(child->domain.sqrDist(dpp.getQueryPoint())<dpp.getQueryRadius2())
+				processPointsDirected<VertexParam,DirectedPointProcessorParam>(child,dpp);
+			}
+		}
+	}
+
 template <class VertexParam,class PointProcessorParam>
 inline
 void
@@ -140,17 +318,48 @@ LidarOctree::processSelectedPoints(
 	else if(node->selectedPoints!=0)
 		{
 		/* Process all selected points in this node: */
-		const VertexParam* points=reinterpret_cast<const VertexParam*>(node->points);
+		const VertexParam* points=static_cast<const VertexParam*>(node->points);
 		for(unsigned int i=0;i<node->numPoints;++i)
 			if(node->selectedPoints[i])
 				{
 				/* Process the point's original LiDAR value: */
-				LidarPoint lp;
-				for(int j=0;j<3;++j)
-					lp[j]=points[i].position[j];
+				LidarPoint lp=points[i].position;
 				for(int j=0;j<4;++j)
 					lp.value[j]=node->selectedPointColors[i][j];
 				pp(lp);
 				}
-		};
+		}
+	}
+
+template <class VertexParam,class ColoringPointProcessorParam>
+inline
+void
+LidarOctree::colorSelectedPoints(
+	LidarOctree::Node* node,
+	ColoringPointProcessorParam& cpp)
+	{
+	if(node->selectedPoints!=0)
+		{
+		/* Color all selected points in this node: */
+		VertexParam* points=static_cast<VertexParam*>(node->points);
+		for(unsigned int i=0;i<node->numPoints;++i)
+			if(node->selectedPoints[i])
+				{
+				/* Process the point's original LiDAR value, but pass the selected color along: */
+				LidarPoint lp=points[i].position;
+				for(int j=0;j<4;++j)
+					lp.value[j]=node->selectedPointColors[i][j];
+				cpp(lp,points[i].color);
+				}
+		
+		/* Invalidate the node's point array: */
+		++node->pointsVersion;
+		}
+	
+	if(node->children!=0)
+		{
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			colorSelectedPoints<VertexParam,ColoringPointProcessorParam>(&node->children[childIndex],cpp);
+		}
 	}

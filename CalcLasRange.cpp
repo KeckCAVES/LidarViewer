@@ -26,7 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/LargeFile.h>
 #include <Math/Constants.h>
 
-void checkLasFileRange(const char* fileName,float range[2])
+void checkLasFileRange(const char* fileName,float intensityRange[2],float rgbRange[3][2])
 	{
 	/* Open the LAS input file: */
 	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
@@ -83,33 +83,54 @@ void checkLasFileRange(const char* fileName,float range[2])
 		
 		/* Read the point intensity: */
 		float intensity=float(file.read<unsigned short>());
-		if(range[0]>intensity)
-			range[0]=intensity;
-		if(range[1]<intensity)
-			range[1]=intensity;
+		if(intensityRange[0]>intensity)
+			intensityRange[0]=intensity;
+		if(intensityRange[1]<intensity)
+			intensityRange[1]=intensity;
 		
-		/* Ignore the rest of the point record: */
+		/* Skip irrelevant information: */
 		char dummy[4];
 		file.read(dummy,4);
 		file.read<unsigned short>();
-		if(pointDataFormat==1)
+		if(pointDataFormat&0x1)
 			file.read<double>();
+		if(pointDataFormat>=2)
+			{
+			/* Read the point color: */
+			unsigned short rgb[3];
+			file.read(rgb,3);
+			for(int j=0;j<3;++j)
+				{
+				float value=float(rgb[j]);
+				if(rgbRange[j][0]>value)
+					rgbRange[j][0]=value;
+				if(rgbRange[j][1]<value)
+					rgbRange[j][1]=value;
+				}
+			}
 		}
 	std::cout<<" done."<<std::endl;
 	}
 
 int main(int argc,char* argv[])
 	{
-	float range[2];
-	range[0]=Math::Constants<float>::max;
-	range[1]=Math::Constants<float>::min;
+	float intensityRange[2];
+	intensityRange[0]=Math::Constants<float>::max;
+	intensityRange[1]=Math::Constants<float>::min;
+	float rgbRange[3][2];
+	for(int i=0;i<3;++i)
+		{
+		rgbRange[i][0]=Math::Constants<float>::max;
+		rgbRange[i][1]=Math::Constants<float>::min;
+		}
 	for(int i=1;i<argc;++i)
 		{
 		std::cout<<"Checking file "<<argv[i]<<std::endl;
-		checkLasFileRange(argv[i],range);
+		checkLasFileRange(argv[i],intensityRange,rgbRange);
 		}
 	
-	std::cout<<"Overall value range: ["<<range[0]<<", "<<range[1]<<"]"<<std::endl;
+	std::cout<<"Overall intensity range: ["<<intensityRange[0]<<", "<<intensityRange[1]<<"]"<<std::endl;
+	std::cout<<"Overall RGB range: ["<<rgbRange[0][0]<<", "<<rgbRange[0][1]<<"], ["<<rgbRange[1][0]<<", "<<rgbRange[1][1]<<"], ["<<rgbRange[2][0]<<", "<<rgbRange[2][1]<<"]"<<std::endl;
 	
 	return 0;
 	}

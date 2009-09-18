@@ -146,6 +146,18 @@ class Cube // Class representing a cube
 			}
 		return result;
 		}
+	int compareBox(const Box& box) const // Compares the cube against the given box; returns if it overlaps and/or is contained
+		{
+		int result=OVERLAPS|CONTAINS;
+		for(int i=0;i<3;++i)
+			{
+			if(max[i]<=box.min[i]||min[i]>=box.max[i])
+				result=SEPARATE;
+			if(min[i]<box.min[i]||max[i]>box.max[i])
+				result&=~CONTAINS;
+			}
+		return result;
+		}
 	bool contains(const Point& point) const // Returns true if the cube contains the given point
 		{
 		bool result=true;

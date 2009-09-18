@@ -44,6 +44,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLFrustum.h>
 #include <GLMotif/StyleSheet.h>
 #include <GLMotif/Margin.h>
+#include <GLMotif/Separator.h>
 #include <GLMotif/Button.h>
 #include <GLMotif/CascadeButton.h>
 #include <GLMotif/Label.h>
@@ -69,10 +70,14 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "LidarSelectionSaver.h"
 #include "Primitive.h"
 #include "PlanePrimitive.h"
+#include "BruntonPrimitive.h"
 #include "LinePrimitive.h"
 #include "PointPrimitive.h"
 #include "SpherePrimitive.h"
 #include "CylinderPrimitive.h"
+#include "PointClassifier.h"
+#include "RidgeFinder.h"
+#include "SceneGraph.h"
 
 #include "LidarViewer.h"
 
@@ -205,11 +210,16 @@ GLMotif::Popup* LidarViewer::createSelectionMenu(void)
 	
 	GLMotif::SubMenu* selectionMenu=new GLMotif::SubMenu("SelectionMenu",selectionMenuPopup,false);
 	
-	GLMotif::Button* clearSelectionButton=new GLMotif::Button("ClearSelectionButton",selectionMenu,"Clear Selection");
-	clearSelectionButton->getSelectCallbacks().add(this,&LidarViewer::clearSelectionCallback);
+	GLMotif::Button* classifySelectionButton=new GLMotif::Button("ClassifySelectionButton",selectionMenu,"Classify Selection");
+	classifySelectionButton->getSelectCallbacks().add(this,&LidarViewer::classifySelectionCallback);
 	
 	GLMotif::Button* saveSelectionButton=new GLMotif::Button("SaveSelectionButton",selectionMenu,"Save Selection");
 	saveSelectionButton->getSelectCallbacks().add(this,&LidarViewer::saveSelectionCallback);
+	
+	new GLMotif::Separator("Separator1",selectionMenu,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
+	
+	GLMotif::Button* clearSelectionButton=new GLMotif::Button("ClearSelectionButton",selectionMenu,"Clear Selection");
+	clearSelectionButton->getSelectCallbacks().add(this,&LidarViewer::clearSelectionCallback);
 	
 	selectionMenu->manageChild();
 	
@@ -225,6 +235,9 @@ GLMotif::Popup* LidarViewer::createExtractionMenu(void)
 	GLMotif::Button* extractPlaneButton=new GLMotif::Button("ExtractPlaneButton",extractionMenu,"Extract Plane");
 	extractPlaneButton->getSelectCallbacks().add(this,&LidarViewer::extractPlaneCallback);
 	
+	GLMotif::Button* extractBruntonButton=new GLMotif::Button("ExtractBruntonButton",extractionMenu,"Indicate Strike+Dip");
+	extractBruntonButton->getSelectCallbacks().add(this,&LidarViewer::extractBruntonCallback);
+	
 	GLMotif::Button* extractSphereButton=new GLMotif::Button("ExtractSphereButton",extractionMenu,"Extract Sphere");
 	extractSphereButton->getSelectCallbacks().add(this,&LidarViewer::extractSphereCallback);
 	
@@ -239,6 +252,8 @@ GLMotif::Popup* LidarViewer::createExtractionMenu(void)
 	
 	GLMotif::Button* savePrimitivesButton=new GLMotif::Button("SavePrimitivesButton",extractionMenu,"Save Primitives");
 	savePrimitivesButton->getSelectCallbacks().add(this,&LidarViewer::savePrimitivesCallback);
+	
+	new GLMotif::Separator("Separator1",extractionMenu,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
 	
 	GLMotif::Button* deleteSelectedPrimitivesButton=new GLMotif::Button("DeleteSelectedPrimitivesButton",extractionMenu,"Delete Selected Primitives");
 	deleteSelectedPrimitivesButton->getSelectCallbacks().add(this,&LidarViewer::deleteSelectedPrimitivesCallback);
@@ -519,6 +534,24 @@ GLMotif::PopupWindow* LidarViewer::createInteractionDialog(void)
 	
 	interactionDialogSelectorModes=selectorModes;
 	
+	/* Create a slider/textfield combo to change the point classification neighborhood size: */
+	GLMotif::RowColumn* neighborhoodSizeBox=new GLMotif::RowColumn("NeighborhoodSize",interactionSettings,false);
+	neighborhoodSizeBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	
+	GLMotif::Label* neighborhoodSizeLabel=new GLMotif::Label("NeighborhoodSizeLabel",neighborhoodSizeBox,"Neighborhood Size");
+	
+	neighborhoodSizeValue=new GLMotif::TextField("NeighborhoodSizeValue",neighborhoodSizeBox,7);
+	neighborhoodSizeValue->setFieldWidth(7);
+	neighborhoodSizeValue->setPrecision(3);
+	neighborhoodSizeValue->setValue(double(neighborhoodSize));
+	
+	GLMotif::Slider* neighborhoodSizeSlider=new GLMotif::Slider("NeighborhoodSizeSlider",neighborhoodSizeBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+	neighborhoodSizeSlider->setValueRange(-3.0,3.0,0.1);
+	neighborhoodSizeSlider->setValue(Math::log(double(neighborhoodSize)));
+	neighborhoodSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::neighborhoodSizeSliderCallback);
+	
+	neighborhoodSizeBox->manageChild();
+	
 	interactionSettings->manageChild();
 	
 	return interactionDialog;
@@ -649,6 +682,7 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 brushSize(Vrui::getGlyphRenderer()->getGlyphSize()*Vrui::Scalar(2.5)),
 	 brushColor(0.6f,0.6f,0.1f,0.5f),
 	 defaultSelectorMode(SelectorLocator::ADD),
+	 neighborhoodSize(1),
 	 extractorPipe(Vrui::openPipe()),
 	 primitiveColor(0.5f,0.5f,0.1f,0.5f),
 	 selectedPrimitiveColor(0.1f,0.5f,0.5f,0.5f),
@@ -776,6 +810,9 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	/* Register the custom tool class with the Vrui tool manager: */
 	LidarToolFactory* lidarToolFactory=new LidarToolFactory(*Vrui::getToolManager(),octree);
 	Vrui::getToolManager()->addClass(lidarToolFactory,LidarToolFactory::factoryDestructor);
+	
+	/* Initialize the scene graph: */
+	createSceneGraph();
 	}
 
 LidarViewer::~LidarViewer(void)
@@ -790,6 +827,9 @@ LidarViewer::~LidarViewer(void)
 	/* Destroy all primitives: */
 	for(PrimitiveList::iterator pIt=primitives.begin();pIt!=primitives.end();++pIt)
 		delete* pIt;
+	
+	/* Destroy the scene graph: */
+	destroySceneGraph();
 	
 	/* Delete the GUI: */
 	delete mainMenu;
@@ -987,6 +1027,9 @@ void LidarViewer::display(GLContextData& contextData) const
 		}
 	glPopAttrib();
 	
+	/* Render the scene graph: */
+	renderSceneGraph(contextData);
+	
 	/* Render all locators: */
 	for(LocatorList::const_iterator lIt=locators.begin();lIt!=locators.end();++lIt)
 		(*lIt)->glRenderAction(contextData);
@@ -1037,6 +1080,16 @@ void LidarViewer::changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCall
 		}
 	}
 
+void LidarViewer::classifySelectionCallback(Misc::CallbackData* cbData)
+	{
+	/* Create a point classification functor: */
+	// PointClassifier pc(octree,neighborhoodSize);
+	RidgeFinder pc(octree,neighborhoodSize);
+	
+	/* Classify all selected points: */
+	octree->colorSelectedPoints(pc);
+	}
+
 void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
 	{
 	if(Vrui::isMaster())
@@ -1076,6 +1129,30 @@ void LidarViewer::extractPlaneCallback(Misc::CallbackData* cbData)
 		{
 		if(Vrui::isMaster())
 			std::cerr<<"Did not extract plane due to exception "<<err.what()<<std::endl;
+		}
+	}
+
+void LidarViewer::extractBruntonCallback(Misc::CallbackData* cbData)
+	{
+	try
+		{
+		BruntonPrimitive* primitive;
+		if(Vrui::isMaster())
+			primitive=new BruntonPrimitive(octree,extractorPipe);
+		else
+			primitive=new BruntonPrimitive(extractorPipe);
+		
+		/* Store the primitive: */
+		lastPickedPrimitive=addPrimitive(primitive);
+		
+		/* Update the texture generation plane: */
+		texturePlane=primitive->getPlane();
+		texturePlane.normalize();
+		}
+	catch(std::runtime_error err)
+		{
+		if(Vrui::isMaster())
+			std::cerr<<"Did not extract brunton due to exception "<<err.what()<<std::endl;
 		}
 	}
 
@@ -1425,6 +1502,15 @@ void LidarViewer::brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackD
 		for(LocatorList::iterator lIt=locators.begin();lIt!=locators.end();++lIt)
 			(*lIt)->updateSettings();
 		}
+	}
+
+void LidarViewer::neighborhoodSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+	{
+	/* Get the new neighborhood size: */
+	neighborhoodSize=Scalar(Math::pow(10.0,double(cbData->value)));
+	
+	/* Update the neighborhood size value label: */
+	neighborhoodSizeValue->setValue(double(neighborhoodSize));
 	}
 
 void LidarViewer::updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)

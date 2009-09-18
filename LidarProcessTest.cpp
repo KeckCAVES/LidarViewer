@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarProcessTest - Test program for the LiDAR processing octree data
 structure.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,6 +27,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <vector>
 #include <Misc/Timer.h>
+#include <Threads/Thread.h>
 #include <Math/Constants.h>
 #include <Math/Random.h>
 #include <Geometry/ArrayKdTree.h>
@@ -57,6 +58,146 @@ class PointCounter // Functor class to count the number of points stored in an o
 		return numPoints;
 		}
 	};
+
+class DirectedProcessFunctor
+	{
+	/* Elements: */
+	protected:
+	Point queryPoint;
+	Scalar queryRadius2;
+	
+	/* Constructors and destructors: */
+	public:
+	DirectedProcessFunctor(const Point& sQueryPoint,Scalar sQueryRadius2)
+		:queryPoint(sQueryPoint),queryRadius2(sQueryRadius2)
+		{
+		}
+	
+	/* Methods: */
+	const Point& getQueryPoint(void) const
+		{
+		return queryPoint;
+		}
+	Scalar getQueryRadius2(void) const
+		{
+		return queryRadius2;
+		}
+	};
+
+class NeighborCounter:public DirectedProcessFunctor
+	{
+	public:
+	size_t numPoints;
+	
+	NeighborCounter(const Point& queryPoint,Scalar queryRadius2)
+		:DirectedProcessFunctor(queryPoint,queryRadius2),
+		 numPoints(0)
+		{
+		}
+	
+	void operator()(const LidarPoint& point)
+		{
+		++numPoints;
+		}
+	};
+
+class PointDensityCalculator
+	{
+	struct ThreadArgs
+		{
+		unsigned int numPoints;
+		const LidarPoint* points;
+		size_t numNeighbors;
+		};
+	
+	LidarProcessOctree& lpo;
+	Scalar neighborhoodRadius;
+	int numThreads;
+	Threads::Thread* threads;
+	ThreadArgs* threadArgs;
+	public:
+	size_t numPoints;
+	size_t totalNumNeighbors;
+	
+	void* processThreadMethod(ThreadArgs* args)
+		{
+		args->numNeighbors=0;
+		for(unsigned int i=0;i<args->numPoints;++i)
+			{
+			NeighborCounter nc(args->points[i],neighborhoodRadius*neighborhoodRadius);
+			lpo.processPointsDirected(nc);
+			args->numNeighbors+=nc.numPoints;
+			}
+		}
+	
+	PointDensityCalculator(LidarProcessOctree& sLpo,Scalar sNeighborhoodRadius,int sNumThreads)
+		:lpo(sLpo),
+		 neighborhoodRadius(sNeighborhoodRadius),
+		 numThreads(sNumThreads),threads(new Threads::Thread[numThreads]),threadArgs(new ThreadArgs[numThreads]),
+		 numPoints(0),totalNumNeighbors(0)
+		{
+		}
+	~PointDensityCalculator(void)
+		{
+		delete[] threads;
+		delete[] threadArgs;
+		}
+	
+	void operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
+		{
+		if(!node.isLeaf()||node.getNumPoints()==0)
+			return;
+		
+		for(int i=0;i<numThreads;++i)
+			{
+			unsigned int firstPoint=(node.getNumPoints()*i)/numThreads;
+			unsigned int lastPoint=(node.getNumPoints()*(i+1))/numThreads;
+			threadArgs[i].numPoints=lastPoint-firstPoint;
+			threadArgs[i].points=node.getPoints()+firstPoint;
+			threads[i].start(this,&PointDensityCalculator::processThreadMethod,&threadArgs[i]);
+			}
+		for(int i=0;i<numThreads;++i)
+			{
+			threads[i].join();
+			totalNumNeighbors+=threadArgs[i].numNeighbors;
+			}
+		numPoints+=node.getNumPoints();
+		}
+	void operator()(const LidarPoint& point)
+		{
+		++numPoints;
+		NeighborCounter nc(point,neighborhoodRadius*neighborhoodRadius);
+		lpo.processPointsDirected(nc);
+		totalNumNeighbors+=nc.numPoints;
+		}
+	};
+
+int main(int argc,char* argv[])
+	{
+	LidarProcessOctree lpo(argv[1],512*1024*1024);
+	
+	PointCounter pc;
+	Scalar radius=Scalar(0.1);
+	PointDensityCalculator pdc(lpo,radius,4);
+	#if 0
+	Box box;
+	box.min=Point(930,530,0);
+	box.max=Point(970,570,100);
+	lpo.processPointsInBox(box,pdc);
+	#else
+	// lpo.processPoints(pdc);
+	lpo.processNodesPostfix(pdc);
+	#endif
+	
+	std::cout<<"Number of processed points: "<<pdc.numPoints<<std::endl;
+	std::cout<<"Total number of found neighbors: "<<pdc.totalNumNeighbors<<std::endl;
+	std::cout<<"Total number of loaded octree nodes: "<<lpo.getNumSubdivideCalls()<<", "<<lpo.getNumLoadedNodes()<<std::endl;
+	std::cout<<"Average point density in 1/m^3: "<<pdc.totalNumNeighbors/(pdc.numPoints*4.0/3.0*3.141592654*radius*radius*radius)<<std::endl;
+	
+	return 0;
+	}
+
+#if 0
 
 class NearestNeighborFinder // Functor class to find the nearest non-duplicate neighbor of a point in an octree file
 	{
@@ -389,14 +530,17 @@ int main(int argc,char* argv[])
 	/* Create a processing octree: */
 	LidarProcessOctree lpo(fileName,size_t(cacheSize)*size_t(1024*1024));
 	
-	#if 0
+	#if 1
 	
 	/* Count the number of points in the octree: */
 	PointCounter pc;
-	lpo.processPoints(pc);
+	const Cube& c=lpo.getDomain();
+	// Box box(c.getMin(),c.getMax());
+	Box box(Point(700.0,300.0,-200.0),Point(1200.0,800.0,300.0));
+	lpo.processPointsInBox(box,pc);
 	std::cout<<"Octree contains "<<pc.getNumPoints()<<" points"<<std::endl;
 	
-	#elif 1
+	#elif 0
 	
 	if(maxNumNeighbors==1)
 		{
@@ -504,3 +648,5 @@ int main(int argc,char* argv[])
 	std::cout<<"Total runtime: "<<t.getTime()<<" s"<<std::endl;
 	return 0;
 	}
+
+#endif

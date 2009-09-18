@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,8 +24,12 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #define LIDARPROCESSOCTREE_INCLUDED
 
 #define OPTIMIZED_TRAVERSAL 1
+#define ALLOW_THREADING 1
 
 #include <Math/Math.h>
+#if ALLOW_THREADING
+#include <Threads/Mutex.h>
+#endif
 
 #include "LidarTypes.h"
 #include "Cube.h"
@@ -41,6 +45,9 @@ class LidarProcessOctree
 		
 		/* Elements: */
 		private:
+		#if ALLOW_THREADING
+		Threads::Mutex mutex; // Mutex to serialize changes to a node's state
+		#endif
 		Node* parent; // Pointer to node's parent node; 0 for root
 		LidarFile::Offset childrenOffset; // Offset of the node's children in the octree file (0 if node is leaf node)
 		Node* children; // Pointer to an array of eight child nodes (0 if node is not subdivided)
@@ -52,6 +59,22 @@ class LidarProcessOctree
 		unsigned int processCounter; // Number of processes who have entered this node's subtree
 		Node* lruPred; // Pointer to previous leaf parent node
 		Node* lruSucc; // Pointer to next leaf parent node
+		
+		/* Private methods: */
+		void enter(void)
+			{
+			#if ALLOW_THREADING
+			Threads::Mutex::Lock lock(mutex);
+			#endif
+			++processCounter;
+			}
+		void leave(void)
+			{
+			#if ALLOW_THREADING
+			Threads::Mutex::Lock lock(mutex);
+			#endif
+			--processCounter;
+			}
 		
 		/* Constructors and destructors: */
 		private:
@@ -92,6 +115,9 @@ class LidarProcessOctree
 	
 	/* Elements: */
 	private:
+	#if ALLOW_THREADING
+	Threads::Mutex fileMutex; // Mutex to serialize access to the underlying LiDAR files
+	#endif
 	LidarFile indexFile; // The file containing the octree's structural data
 	LidarFile pointsFile; // The file containing the octree's point data
 	LidarFile::Offset pointsRecordSize; // Record size of points file
@@ -100,7 +126,11 @@ class LidarProcessOctree
 	Node root; // Root node
 	unsigned int cacheSize; // Maximum number of nodes that can be held in memory
 	unsigned int numCachedNodes; // Number of nodes currently held in memory
+	size_t numSubdivideCalls; // Total number of calls to the subdivide method
 	size_t numLoadedNodes; // Total number of nodes that had to be loaded from file
+	#if ALLOW_THREADING
+	Threads::Mutex lruMutex; // Mutex to serialize access to the LRU list
+	#endif
 	Node* lruHead; // Head of leaf parent node list
 	Node* lruTail; // Tail of leaf parent node list
 	
@@ -112,6 +142,8 @@ class LidarProcessOctree
 	void processNodesPostfix(Node& node,unsigned int nodeLevel,NodeProcessFunctorParam& processFunctor); // Recursive node processor for octree in post-fix order
 	template <class ProcessFunctorParam>
 	void processPoints(Node& node,ProcessFunctorParam& processFunctor); // Recursive point processor
+	template <class ProcessFunctorParam>
+	void processPointsInBox(Node& node,const Box& box,ProcessFunctorParam& processFunctor); // Recursive point processor
 	template <class DirectedProcessFunctorParam>
 	static void processPointsDirectedKdtree(const LidarPoint* points,unsigned int left,unsigned int right,unsigned int splitDimension,DirectedProcessFunctorParam& processFunctor); // Recursive directed point processor for intra-node kd-tree
 	template <class DirectedProcessFunctorParam>
@@ -179,11 +211,21 @@ class LidarProcessOctree
 		/* Call recursive point processor on the root node: */
 		processPoints(root,processFunctor);
 		}
+	template <class ProcessFunctorParam>
+	void processPointsInBox(const Box& box,ProcessFunctorParam& processFunctor) // Calls given functor for each LiDAR point stored in the octree that is inside the given box
+		{
+		/* Call recursive point processor on the root node: */
+		processPointsInBox(root,box,processFunctor);
+		}
 	template <class DirectedProcessFunctorParam>
 	void processPointsDirected(DirectedProcessFunctorParam& processFunctor) // Calls given functor for each LiDAR point stored in the octree in order of distance from a query point
 		{
 		/* Call recursive directed point processor on the root node: */
 		processPointsDirectedOctree(root,processFunctor);
+		}
+	size_t getNumSubdivideCalls(void) const // Returns total number of calls to the subdivide method
+		{
+		return numSubdivideCalls;
 		}
 	size_t getNumLoadedNodes(void) const // Returns total number of nodes loaded from file
 		{

@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -54,13 +54,51 @@ Methods of class LidarProcessOctree:
 
 void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 	{
+	{
+	#if ALLOW_THREADING
+	Threads::Mutex::Lock lruLock(lruMutex);
+	#endif
+	++numSubdivideCalls;
+	}
+	
+	#if ALLOW_THREADING
+	Threads::Mutex::Lock nodeLock(node.mutex);
+	#endif
+	
+	/* Bail out if the node's children have magically appeared since the last check: */
+	if(node.children!=0)
+		return;
+	
 	/* Check if the node cache is full: */
+	{
+	#if ALLOW_THREADING
+	Threads::Mutex::Lock lruLock(lruMutex);
+	#endif
 	if(numCachedNodes+8>cacheSize)
 		{
 		/* Find an unused leaf node parent and remove its children: */
 		Node* coarsenNode;
+		#if ALLOW_THREADING
+		for(coarsenNode=lruHead;coarsenNode!=0;coarsenNode=coarsenNode->lruSucc)
+			{
+			/* Check if the leaf parent is currently unused: */
+			coarsenNode->mutex.lock();
+			if(coarsenNode->processCounter==0)
+				break;
+			coarsenNode->mutex.unlock();
+			}
+		#else
 		for(coarsenNode=lruHead;coarsenNode!=0&&coarsenNode->processCounter!=0;coarsenNode=coarsenNode->lruSucc)
 			;
+		#endif
+		
+		/* Remove the found node's children: */
+		delete[] coarsenNode->children;
+		coarsenNode->children=0;
+		
+		#if ALLOW_THREADING
+		coarsenNode->mutex.unlock();
+		#endif
 		
 		/* Remove the found node from the lru list: */
 		if(coarsenNode->lruPred!=0)
@@ -73,10 +111,6 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 			lruTail=coarsenNode->lruPred;
 		coarsenNode->lruPred=0;
 		coarsenNode->lruSucc=0;
-		
-		/* Remove the found node's children: */
-		delete[] coarsenNode->children;
-		coarsenNode->children=0;
 		
 		/* Update the node cache: */
 		numCachedNodes-=8;
@@ -103,37 +137,6 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 				}
 			}
 		}
-	
-	/* Create the node's children: */
-	Node* children=new Node[8];
-	indexFile.seekSet(node.childrenOffset);
-	for(int childIndex=0;childIndex<8;++childIndex)
-		{
-		Node& child=children[childIndex];
-		
-		/* Read the child node's structure: */
-		LidarOctreeFileNode ofn;
-		ofn.read(indexFile);
-		child.parent=&node;
-		child.childrenOffset=ofn.childrenOffset;
-		child.domain=Cube(node.domain,childIndex);
-		child.numPoints=ofn.numPoints;
-		child.dataOffset=ofn.dataOffset;
-		child.detailSize=ofn.detailSize;
-		
-		if(child.numPoints>0)
-			{
-			/* Load the child node's points: */
-			child.points=new LidarPoint[maxNumPointsPerNode]; // Always allocate maximum to prevent memory fragmentation
-			pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*child.dataOffset);
-			pointsFile.read(child.points,child.numPoints);
-			}
-		
-		++numLoadedNodes;
-		}
-	
-	/* Install the node's children array: */
-	node.children=children;
 	
 	/* Check if the node's parent was a leaf parent: */
 	Node* parent=node.parent;
@@ -164,6 +167,43 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 	/* Update the node cache: */
 	numCachedNodes+=8U;
 	}
+	
+	/* Create and load the node's children: */
+	{
+	#if ALLOW_THREADING
+	Threads::Mutex::Lock fileLock(fileMutex);
+	#endif
+	Node* children=new Node[8];
+	indexFile.seekSet(node.childrenOffset);
+	for(int childIndex=0;childIndex<8;++childIndex)
+		{
+		Node& child=children[childIndex];
+		
+		/* Read the child node's structure: */
+		LidarOctreeFileNode ofn;
+		ofn.read(indexFile);
+		child.parent=&node;
+		child.childrenOffset=ofn.childrenOffset;
+		child.domain=Cube(node.domain,childIndex);
+		child.numPoints=ofn.numPoints;
+		child.dataOffset=ofn.dataOffset;
+		child.detailSize=ofn.detailSize;
+		
+		if(child.numPoints>0)
+			{
+			/* Load the child node's points: */
+			child.points=new LidarPoint[maxNumPointsPerNode]; // Always allocate maximum to prevent memory fragmentation
+			pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*child.dataOffset);
+			pointsFile.read(child.points,child.numPoints);
+			}
+		
+		++numLoadedNodes;
+		}
+	
+	/* Install the node's children array: */
+	node.children=children;
+	}
+	}
 
 namespace {
 
@@ -184,7 +224,7 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSize)
 	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
 	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
-	 numLoadedNodes(0),
+	 numSubdivideCalls(0),numLoadedNodes(0),
 	 lruHead(0),lruTail(0)
 	{
 	/* Read the octree file header: */

@@ -22,6 +22,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 ***********************************************************************/
 
 #include <string.h>
+#include <utility>
 #include <iostream>
 
 #include "TempOctree.h"
@@ -101,6 +102,10 @@ void PointAccumulator::finishReading(void)
 		/* Write the leftover in-memory points into another temporary octree: */
 		savePoints();
 		}
+	
+	/* A hackety-hack to release the point vector's allocated memory: */
+	std::vector<LidarPoint> empty;
+	std::swap(points,empty);
 	}
 
 void PointAccumulator::deleteTempOctrees(void)

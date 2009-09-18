@@ -39,6 +39,12 @@ class PointBasedLightingShader
 		bool enabled; // Flag whether the light source is enabled
 		bool attenuated; // Flag whether the light source uses non-constant attenuation
 		bool spotLight; // Flag whether the light source is a spot light
+		
+		/* Constructors and destructors: */
+		LightState(void)
+			:enabled(false),attenuated(false),spotLight(false)
+			{
+			}
 		};
 	
 	/* Elements: */
