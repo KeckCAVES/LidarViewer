@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -31,7 +31,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/gl.h>
 #include <GL/GLColor.h>
 #include <GL/GLObject.h>
-#define NONSTANDARD_GLVERTEX_TEMPLATES
+#define GLGEOMETRY_NONSTANDARD_TEMPLATES
 #include <GL/GLGeometryVertex.h>
 
 #include "LidarTypes.h"
@@ -187,6 +187,8 @@ class LidarOctree:public GLObject
 	LidarFile::Offset pointsRecordSize; // Record size of points file
 	LidarFile* normalsFile; // Pointer to an optional file containing normal vectors for each point
 	LidarFile::Offset normalsRecordSize; // Record size of normals file
+	LidarFile* colorsFile; // Pointer to an optional file containing colors for each point
+	LidarFile::Offset colorsRecordSize; // Record size of colors file
 	unsigned int maxNumPointsPerNode; // Maximum number of points per node
 	Vector pointOffset; // Offset from original LiDAR point positions to re-centered point positions
 	Node root; // The octree's root node (offset to center around the origin)
@@ -225,10 +227,16 @@ class LidarOctree:public GLObject
 	void deselectPointsInNode(Node* node,const Interactor& interactor); // Deselects points in the given node
 	bool deselectPoints(Node* node,const Interactor& interactor); // Deselects points in the given subtree; returns true if node is removable (i.e., has no children or selected points)
 	bool clearSelection(Node* node); // Clears selected points in the given subtree; returns true if node is removable (i.e., has no children or selected points)
+	template <class VertexParam,class PointProcessorParam>
+	void processPointsInBox(const Box& box,const Node* node,PointProcessorParam& dpp) const; // Processes points inside the given box in the given subtree
 	template <class VertexParam,class DirectedPointProcessorParam>
 	void processPointsDirected(const Node* node,DirectedPointProcessorParam& dpp) const; // Processes points in the given subtree in order of increasing distance from the processor's query point
 	template <class VertexParam,class PointProcessorParam>
 	void processSelectedPoints(const Node* node,PointProcessorParam& pp) const; // Processes selected points in the given subtree
+	template <class PointNormalProcessorParam>
+	void processSelectedPointsWithNormals(const Node* node,PointNormalProcessorParam& pp) const; // Processes selected points in the given subtree
+	template <class PointNormalProcessorParam>
+	void processSelectedPointsWithNullNormals(const Node* node,PointNormalProcessorParam& pp) const; // Processes selected points in the given subtree
 	template <class VertexParam,class ColoringPointProcessorParam>
 	void colorSelectedPoints(Node* node,ColoringPointProcessorParam& cpp); // Colors selected points in the given subtree
 	void loadNodePoints(Node* node); // Loads the point array of the given node
@@ -265,6 +273,15 @@ class LidarOctree:public GLObject
 	void selectPoints(const Interactor& interactor); // Selects all points inside the interactor's region of influence
 	void deselectPoints(const Interactor& interactor); // Deselects all points inside the interactor's region of influence
 	void clearSelection(void); // Clears the set of selected points
+	template <class PointProcessorParam>
+	void processPointsInBox(const Box& box,PointProcessorParam& dpp) const // Processes points in leaf nodes that are inside the given box
+		{
+		/* Process nodes from the root: */
+		if(root.haveNormals)
+			processPointsInBox<NVertex,PointProcessorParam>(box,&root,dpp);
+		else
+			processPointsInBox<Vertex,PointProcessorParam>(box,&root,dpp);
+		}
 	template <class DirectedPointProcessorParam>
 	void processPointsDirected(DirectedPointProcessorParam& dpp) const // Processes points in leaf nodes in order of approximately increasing distance from the processor's query point
 		{
@@ -282,6 +299,15 @@ class LidarOctree:public GLObject
 			processSelectedPoints<NVertex,PointProcessorParam>(&root,pp);
 		else
 			processSelectedPoints<Vertex,PointProcessorParam>(&root,pp);
+		};
+	template <class PointNormalProcessorParam>
+	void processSelectedPointsWithNormals(PointNormalProcessorParam& pp) const // Processes the set of selected points in leaf nodes with the given point processor
+		{
+		/* Process nodes from the root: */
+		if(root.haveNormals)
+			processSelectedPointsWithNormals<PointNormalProcessorParam>(&root,pp);
+		else
+			processSelectedPointsWithNullNormals<PointNormalProcessorParam>(&root,pp);
 		};
 	template <class ColoringPointProcessorParam>
 	void colorSelectedPoints(ColoringPointProcessorParam& cpp) // Ditto, but allows point processor to change the selection color of selected points

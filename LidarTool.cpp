@@ -21,6 +21,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
+#include "LidarTool.h"
+
 #include <Comm/MulticastPipe.h>
 #include <Geometry/Ray.h>
 #include <Geometry/OrthogonalTransformation.h>
@@ -31,8 +33,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "LidarTypes.h"
 #include "LidarOctree.h"
-
-#include "LidarTool.h"
 
 /*********************************
 Methods of class LidarToolFactory:

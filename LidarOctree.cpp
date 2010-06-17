@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -277,16 +277,25 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 	if(!inside)
 		return;
 	
+	/* Find the point inside the node that is closest to the focus+context center: */
+	Point nodeFncPoint=fncCenter;
+	for(int i=0;i<3;++i)
+		{
+		if(nodeFncPoint[i]<node->domain.getMin()[i])
+			nodeFncPoint[i]=node->domain.getMin()[i];
+		if(nodeFncPoint[i]>node->domain.getMax()[i])
+			nodeFncPoint[i]=node->domain.getMax()[i];
+		}
+	
 	/* Calculate the node's projected detail size: */
-	Point nodeCenter=node->domain.getCenter();
-	Scalar projectedDetailSize=frustum.calcProjectedRadius(nodeCenter,node->detailSize);
+	Scalar projectedDetailSize=frustum.calcProjectedRadius(nodeFncPoint,node->detailSize);
 	if(projectedDetailSize>=Scalar(0))
 		{
 		/* Adjust the projected detail size based on the focus+context rule: */
 		if(fncWeight>Scalar(0))
 			{
 			/* Calculate the distance from the node to the focus region: */
-			Scalar fncDist=Geometry::dist(nodeCenter,fncCenter)-node->radius;
+			Scalar fncDist=Geometry::dist(nodeFncPoint,fncCenter)-node->radius;
 			if(fncDist>fncRadius)
 				{
 				/* Adjust the node's projected detail size: */
@@ -295,7 +304,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			}
 		}
 	else
-		projectedDetailSize=Math::Constants<Scalar>::max;
+		projectedDetailSize=Math::Constants<Scalar>::max; // Temporary workaround until GLFrustum is fixed
 	
 	/* Update node's rendering traversal state: */
 	{
@@ -335,6 +344,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			{
 			/* Use the view point for a view-ordered traversal of the child nodes: */
 			int childIndex=0x0;
+			Point nodeCenter=node->domain.getCenter();
 			Point eye=frustum.getEye().toPoint();
 			for(int i=0;i<3;++i)
 				if(eye[i]>=nodeCenter[i])
@@ -791,6 +801,22 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 		normalsFile->seekSet(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
 		normalsFile->read(normalsBuffer,node->numPoints);
 		
+		if(colorsFile!=0)
+			{
+			/* Load the node's colors into a temporary buffer: */
+			Color* colorsBuffer=new Color[maxNumPointsPerNode];
+			colorsFile->seekSet(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
+			colorsFile->read(colorsBuffer,node->numPoints);
+			
+			/* Copy the colors into the point buffer: */
+			for(unsigned int i=0;i<node->numPoints;++i)
+				for(int j=0;j<4;++j)
+					pointsBuffer[i].value[j]=colorsBuffer[i][j];
+			
+			/* Clean up: */
+			delete[] colorsBuffer;
+			}
+		
 		/* Convert the LiDAR points to render points: */
 		for(unsigned int i=0;i<node->numPoints;++i)
 			{
@@ -823,6 +849,22 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
 		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
 		pointsFile.read(pointsBuffer,node->numPoints);
+		
+		if(colorsFile!=0)
+			{
+			/* Load the node's colors into a temporary buffer: */
+			Color* colorsBuffer=new Color[maxNumPointsPerNode];
+			colorsFile->seekSet(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
+			colorsFile->read(colorsBuffer,node->numPoints);
+			
+			/* Copy the colors into the point buffer: */
+			for(unsigned int i=0;i<node->numPoints;++i)
+				for(int j=0;j<4;++j)
+					pointsBuffer[i].value[j]=colorsBuffer[i][j];
+			
+			/* Clean up: */
+			delete[] colorsBuffer;
+			}
 		
 		/* Convert the LiDAR points to render points: */
 		for(unsigned int i=0;i<node->numPoints;++i)
@@ -1020,6 +1062,7 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
 	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
 	 normalsFile(0),
+	 colorsFile(0),
 	 maxRenderLOD(Math::sqrt(Scalar(2))),
 	 fncWeight(0),
 	 numCachedNodes(0),
@@ -1032,6 +1075,15 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	try
 		{
 		normalsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Normals").c_str(),"rb",LidarFile::LittleEndian);
+		}
+	catch(std::runtime_error err)
+		{
+		}
+	
+	/* Check if there is a color file: */
+	try
+		{
+		colorsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Colors").c_str(),"rb",LidarFile::LittleEndian);
 		}
 	catch(std::runtime_error err)
 		{
@@ -1084,9 +1136,16 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	
 	if(root.haveNormals)
 		{
-		/* Read the normal file's header: */
+		/* Read the normal vector file's header: */
 		LidarDataFileHeader dfh(*normalsFile);
 		normalsRecordSize=LidarFile::Offset(dfh.recordSize);
+		}
+	
+	if(colorsFile!=0)
+		{
+		/* Read the color file's header: */
+		LidarDataFileHeader dfh(*colorsFile);
+		colorsRecordSize=LidarFile::Offset(dfh.recordSize);
 		}
 	
 	/* Load the root's point data: */
@@ -1115,8 +1174,9 @@ LidarOctree::~LidarOctree(void)
 	/* Delete the subdivision request queue: */
 	delete[] subdivisionRequestQueue;
 	
-	/* Delete the optional normals file: */
+	/* Delete the optional normal vector and color file: */
 	delete normalsFile;
+	delete colorsFile;
 	}
 
 void LidarOctree::initContext(GLContextData& contextData) const

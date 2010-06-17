@@ -26,6 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdio.h>
 #include <iostream>
 #include <vector>
+#include <Misc/File.h>
 #include <Misc/Timer.h>
 #include <Threads/Thread.h>
 #include <Math/Constants.h>
@@ -172,10 +173,40 @@ class PointDensityCalculator
 		}
 	};
 
+class PointSaver
+	{
+	/* Elements: */
+	private:
+	Misc::File resultFile;
+	
+	/* Constructors and destructors: */
+	public:
+	PointSaver(const char* resultFileName)
+		:resultFile(resultFileName,"wb")
+		{
+		}
+	
+	/* Methods: */
+	void operator()(const LidarPoint& point)
+		{
+		fprintf(resultFile.getFilePtr(),"%.10f %.10f %.10f %03d %03d %03d\n",point[0],point[1],point[2],point.value[0],point.value[1],point.value[2]);
+		}
+	};
+
 int main(int argc,char* argv[])
 	{
 	LidarProcessOctree lpo(argv[1],512*1024*1024);
 	
+	#if 1
+	PointSaver ps(argv[2]);
+	Box box=Box::full;
+	for(int i=0;i<2;++i)
+		{
+		box.min[i]=atof(argv[3+i]);
+		box.max[i]=atof(argv[5+i]);
+		}
+	lpo.processPointsInBox(box,ps);
+	#else
 	PointCounter pc;
 	Scalar radius=Scalar(0.1);
 	PointDensityCalculator pdc(lpo,radius,4);
@@ -193,6 +224,7 @@ int main(int argc,char* argv[])
 	std::cout<<"Total number of found neighbors: "<<pdc.totalNumNeighbors<<std::endl;
 	std::cout<<"Total number of loaded octree nodes: "<<lpo.getNumSubdivideCalls()<<", "<<lpo.getNumLoadedNodes()<<std::endl;
 	std::cout<<"Average point density in 1/m^3: "<<pdc.totalNumNeighbors/(pdc.numPoints*4.0/3.0*3.141592654*radius*radius*radius)<<std::endl;
+	#endif
 	
 	return 0;
 	}

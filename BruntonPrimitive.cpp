@@ -24,6 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "BruntonPrimitive.h"
 
 #include <stdio.h>
+#include <iostream>
 #include <Math/Math.h>
 #include <Geometry/Point.h>
 #include <Geometry/AffineCombiner.h>
@@ -232,6 +233,18 @@ void BruntonPrimitive::buildBrunton(void)
 BruntonPrimitive::BruntonPrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
 	:PlanePrimitive(octree,pipe)
 	{
+	/* Print the strike and dip angles: */
+	Vector normal=getPlane().getNormal();
+	if(normal[2]<Scalar(0))
+		normal=-normal;
+	Scalar dipAngle=Math::acos(normal[2]/Geometry::mag(normal));
+	normal[2]=Scalar(0);
+	Scalar strikeAngle=Math::atan2(normal[0],normal[1]);
+	if(strikeAngle<Scalar(0))
+		strikeAngle+=Scalar(2)*Math::Constants<Scalar>::pi;
+	std::cout<<"Strike angle: "<<Math::deg(strikeAngle)<<std::endl;
+	std::cout<<"Dip angle: "<<Math::deg(dipAngle)<<std::endl;
+	
 	buildBrunton();
 	}
 

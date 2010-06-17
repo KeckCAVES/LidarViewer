@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor classes to calculate a normal vector for each
 point in a LiDAR data set.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,6 +24,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #ifndef NORMALCALCULATOR_INCLUDED
 #define NORMALCALCULATOR_INCLUDED
 
+#include <Threads/Thread.h>
+#include <Threads/Barrier.h>
 #include <Geometry/ComponentArray.h>
 #include <Geometry/Matrix.h>
 #include <Geometry/Plane.h>
@@ -100,11 +102,23 @@ class NodeNormalCalculator
 	Vector* childNormalBuffers[8]; // Array of normal arrays for a node's children during subsampling
 	LidarFile::Offset normalDataSize; // Size of each record in the normal file
 	LidarFile normalFile; // The file to which to write the normal vector data
+	unsigned int numThreads; // Number of processing threads
+	bool shutdownThreads; // Flag to shut down threads at the end
+	Threads::Thread* calcThreads; // Array of threads to calculate normal vectors from point neighborhoods
+	Threads::Barrier calcBarrier;
+	Threads::Thread* subsampleThreads; // Array of threads to subsample normal vectors from node children
+	Threads::Barrier subsampleBarrier;
+	LidarProcessOctree::Node* currentNode; // Pointer to currently processed node
+	LidarProcessOctree::Node* currentChildren[8]; // Pointer to children of currently processed node
 	size_t numProcessedNodes; // Number of already processed nodes
+	
+	/* Private methods: */
+	void* calcThreadMethod(unsigned int threadIndex);
+	void* subsampleThreadMethod(unsigned int threadIndex);
 	
 	/* Constructors and destructors: */
 	public:
-	NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName); // Creates a normal calculator with the given parameters
+	NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName,unsigned int sNumThreads =1); // Creates a normal calculator with the given parameters
 	~NodeNormalCalculator(void);
 	
 	/* Methods: */

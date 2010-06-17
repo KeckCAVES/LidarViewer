@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2009 Oliver Kreylos
+# Copyright (c) 2004-2010 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -25,7 +25,7 @@
 # same setting in Vrui's makefile. By default the directories match; if
 # the installation directory was adjusted during Vrui's installation, it
 # must be adjusted here as well.
-VRUIDIR = $(HOME)/Vrui-1.0
+VRUIDIR = $(HOME)/Vrui-2.0
 
 # Base installation directory for LiDAR Viewer and its configuration
 # file.If this is set to the default of $(PWD), LiDAR Viewer does not
@@ -71,6 +71,8 @@ ALL = $(BINDIR)/CalcLasRange \
       $(BINDIR)/LidarPreprocessor \
       $(BINDIR)/LidarSubtractor \
       $(BINDIR)/LidarIlluminator \
+      $(BINDIR)/PaulBunyan \
+      $(BINDIR)/LidarGridder \
       $(BINDIR)/LidarViewer \
       $(BINDIR)/PointSetSimilarity \
       $(BINDIR)/PrintPrimitiveFile
@@ -102,6 +104,7 @@ LIDARPREPROCESSOR_SOURCES = SplitPoints.cpp \
                             PointAccumulator.cpp \
                             LidarProcessOctree.cpp \
                             LidarOctreeCreator.cpp \
+                            ReadPlyFile.cpp \
                             LidarPreprocessor.cpp
 
 $(OBJDIR)/LidarPreprocessor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'
@@ -138,6 +141,26 @@ $(BINDIR)/LidarIlluminator: $(LIDARILLUMINATOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarIlluminator
 LidarIlluminator: $(BINDIR)/LidarIlluminator
 
+PAULBUNYAN_SOURCES = LidarProcessOctree.cpp \
+                     PaulBunyan.cpp
+
+$(BINDIR)/PaulBunyan: $(PAULBUNYAN_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: PaulBunyan
+PaulBunyan: $(BINDIR)/PaulBunyan
+
+LIDARGRIDDER_SOURCES = LidarProcessOctree.cpp \
+                       LidarGridder.cpp
+
+$(BINDIR)/LidarGridder: $(LIDARGRIDDER_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: LidarGridder
+LidarGridder: $(BINDIR)/LidarGridder
+
 LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       LidarTool.cpp \
                       PlanePrimitive.cpp \
@@ -146,8 +169,12 @@ LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       PointPrimitive.cpp \
                       SpherePrimitive.cpp \
                       CylinderPrimitive.cpp \
+                      ProfileExtractor.cpp \
+                      ProfileTool.cpp \
                       PointBasedLightingShader.cpp \
                       SceneGraph.cpp \
+                      LidarProcessOctree.cpp \
+                      LoadPointSet.cpp \
                       LidarViewer.cpp
 
 $(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'

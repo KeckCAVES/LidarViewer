@@ -1,7 +1,7 @@
 /***********************************************************************
 LinePrimitive - Class for lines extracted from point clouds by
 intersecting two plane primitives.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -50,8 +50,9 @@ class LinePrimitive:public Primitive
 		};
 	public:
 	LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,Comm::MulticastPipe* pipe); // Creates line primitive by intersecting the two given plane primitives; writes result to given pipe if !=0
-	LinePrimitive(Comm::MulticastPipe* pipe); // Creates cylinder by reading cylinder data from given pipe
-	LinePrimitive(Misc::File& file,const Vector& translation); // Reads a cylinder primitive from a binary file
+	LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates line by processing selected points from the given octree; writes result to given pipe if !=0
+	LinePrimitive(Comm::MulticastPipe* pipe); // Creates line by reading line data from given pipe
+	LinePrimitive(Misc::File& file,const Vector& translation); // Reads a line primitive from a binary file
 	
 	/* Methods: */
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const;

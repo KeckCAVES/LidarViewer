@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor class to calculate a normal vector for a
 point in a LiDAR data set.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -297,41 +297,24 @@ class NormalAverager // Class to average normal vectors of collapsed points duri
 Methods of class NormalCalculator:
 *********************************/
 
-NodeNormalCalculator::NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName)
-	:lpo(sLpo),
-	 radius2(Math::sqr(sRadius)),
-	 normalBuffer(new Vector[lpo.getMaxNumPointsPerNode()]),
-	 normalDataSize(sizeof(Scalar)*3),
-	 normalFile(normalFileName,"w+b",LidarFile::LittleEndian),
-	 numProcessedNodes(0)
+void* NodeNormalCalculator::calcThreadMethod(unsigned int threadIndex)
 	{
-	/* Create the child normal buffers: */
-	for(int i=0;i<8;++i)
-		childNormalBuffers[i]=new Vector[lpo.getMaxNumPointsPerNode()];
+	Threads::Thread::setCancelState(Threads::Thread::CANCEL_ENABLE);
 	
-	/* Write the normal file's header: */
-	LidarDataFileHeader dfh((unsigned int)(normalDataSize));
-	dfh.write(normalFile);
-	}
-
-NodeNormalCalculator::~NodeNormalCalculator(void)
-	{
-	/* Delete all buffers: */
-	delete[] normalBuffer;
-	for(int i=0;i<8;++i)
-		delete[] childNormalBuffers[i];
-	}
-
-void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
-	{
-	/* Check if this node is a leaf or an interior node: */
-	if(node.isLeaf())
+	while(true)
 		{
-		/* Calculate a normal vector for each LiDAR point in this node: */
-		for(unsigned int i=0;i<node.getNumPoints();++i)
+		/* Wait on the calculation barrier until there is a job: */
+		calcBarrier.synchronize();
+		if(shutdownThreads)
+			break;
+		
+		/* Process the current node: */
+		unsigned int firstI=(threadIndex*currentNode->getNumPoints())/numThreads;
+		unsigned int lastI=((threadIndex+1)*currentNode->getNumPoints())/numThreads;
+		for(unsigned int i=firstI;i<lastI;++i)
 			{
 			/* Create a plane fitter for the point: */
-			NormalCalculator normalCalculator(node[i],radius2);
+			NormalCalculator normalCalculator((*currentNode)[i],radius2);
 			
 			/* Process the point's neighborhood: */
 			lpo.processPointsDirected(normalCalculator);
@@ -341,12 +324,6 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 				{
 				/* Get the fitted plane's normal vector: */
 				normalBuffer[i]=normalCalculator.calcPlane().getNormal();
-				
-				#if 0
-				/* Flip the normal vector so it always points "upwards" (hacky): */
-				if(normalBuffer[i][2]<Scalar(0))
-					normalBuffer[i]=-normalBuffer[i];
-				#endif
 				}
 			else
 				{
@@ -354,28 +331,30 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 				normalBuffer[i]=Vector::zero;
 				}
 			}
-		}
-	else
-		{
-		/*****************************
-		Subsample the node's children:
-		*****************************/
 		
-		/* Get pointers to the node's children and load their normal vector arrays: */
-		LidarProcessOctree::Node* children[8];
-		for(int childIndex=0;childIndex<8;++childIndex)
-			{
-			children[childIndex]=lpo.getChild(&node,childIndex);
-			if(children[childIndex]->getNumPoints()>0)
-				{
-				normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*children[childIndex]->getDataOffset());
-				normalFile.read(childNormalBuffers[childIndex],children[childIndex]->getNumPoints());
-				}
-			}
+		/* Synchronize on the calculation barrier to signal job completion: */
+		calcBarrier.synchronize();
+		}
+	
+	return 0;
+	}
+
+void* NodeNormalCalculator::subsampleThreadMethod(unsigned int threadIndex)
+	{
+	Threads::Thread::setCancelState(Threads::Thread::CANCEL_ENABLE);
+	
+	while(true)
+		{
+		/* Wait on the subsampling barrier until there is a job: */
+		subsampleBarrier.synchronize();
+		if(shutdownThreads)
+			break;
 		
 		/* Find the points that were collapsed onto each node point and average their normal vectors: */
-		Scalar averageRadius2=Math::sqr(node.getDetailSize()*Scalar(1.5));
-		for(unsigned int i=0;i<node.getNumPoints();++i)
+		Scalar averageRadius2=Math::sqr(currentNode->getDetailSize()*Scalar(1.5));
+		unsigned int firstI=(threadIndex*currentNode->getNumPoints())/numThreads;
+		unsigned int lastI=((threadIndex+1)*currentNode->getNumPoints())/numThreads;
+		for(unsigned int i=firstI;i<lastI;++i)
 			{
 			/*****************************************************************
 			Find the exact normal vector of this point's "ancestor" to
@@ -383,11 +362,11 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 			*****************************************************************/
 			
 			/* Find the child node containing this point's ancestor: */
-			int pointChildIndex=node.getDomain().findChild(node[i]);
-			LidarProcessOctree::Node* pointChild=children[pointChildIndex];
+			int pointChildIndex=currentNode->getDomain().findChild((*currentNode)[i]);
+			LidarProcessOctree::Node* pointChild=currentChildren[pointChildIndex];
 			
 			/* Find the point's ancestor: */
-			FindPoint fp(node[i]);
+			FindPoint fp((*currentNode)[i]);
 			lpo.processNodePointsDirected(pointChild,fp);
 			if(fp.getFoundPoint()==0)
 				Misc::throwStdErr("Things are fucked up!");
@@ -396,15 +375,15 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 			const Vector& pointNormal=childNormalBuffers[pointChildIndex][fp.getFoundPoint()-pointChild->getPoints()];
 			
 			/* Create a functor to average normal vectors from the point's neighborhood: */
-			NormalAverager normalAverager(node[i],averageRadius2,pointNormal);
+			NormalAverager normalAverager((*currentNode)[i],averageRadius2,pointNormal);
 			for(int childIndex=0;childIndex<8;++childIndex)
 				{
 				/* Check if the child node's domain overlaps the search sphere: */
-				if(children[childIndex]->getDomain().sqrDist(node[i])<=averageRadius2)
+				if(currentChildren[childIndex]->getDomain().sqrDist((*currentNode)[i])<=averageRadius2)
 					{
 					/* Search for neighbors in this child node: */
-					normalAverager.setArrays(children[childIndex]->getPoints(),childNormalBuffers[childIndex]);
-					lpo.processNodePointsDirected(children[childIndex],normalAverager);
+					normalAverager.setArrays(currentChildren[childIndex]->getPoints(),childNormalBuffers[childIndex]);
+					lpo.processNodePointsDirected(currentChildren[childIndex],normalAverager);
 					}
 				}
 			
@@ -413,11 +392,98 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 			if(normalBuffer[i]!=Vector::zero)
 				normalBuffer[i].normalize();
 			}
+		
+		/* Synchronize on the subsampling barrier to signal job completion: */
+		subsampleBarrier.synchronize();
+		}
+	
+	return 0;
+	}
+
+NodeNormalCalculator::NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName,unsigned int sNumThreads)
+	:lpo(sLpo),
+	 radius2(Math::sqr(sRadius)),
+	 normalBuffer(new Vector[lpo.getMaxNumPointsPerNode()]),
+	 normalDataSize(sizeof(Scalar)*3),
+	 normalFile(normalFileName,"w+b",LidarFile::LittleEndian),
+	 numThreads(sNumThreads),shutdownThreads(false),
+	 calcThreads(new Threads::Thread[numThreads]),calcBarrier(numThreads+1),
+	 subsampleThreads(new Threads::Thread[numThreads]),subsampleBarrier(numThreads+1),
+	 currentNode(0),
+	 numProcessedNodes(0)
+	{
+	/* Create the child normal buffers: */
+	for(int i=0;i<8;++i)
+		childNormalBuffers[i]=new Vector[lpo.getMaxNumPointsPerNode()];
+	
+	/* Write the normal file's header: */
+	LidarDataFileHeader dfh((unsigned int)(normalDataSize));
+	dfh.write(normalFile);
+	
+	/* Start the worker threads: */
+	for(unsigned int i=0;i<numThreads;++i)
+		{
+		calcThreads[i].start(this,&NodeNormalCalculator::calcThreadMethod,i);
+		subsampleThreads[i].start(this,&NodeNormalCalculator::subsampleThreadMethod,i);
+		}
+	}
+
+NodeNormalCalculator::~NodeNormalCalculator(void)
+	{
+	/* Shut down all threads: */
+	shutdownThreads=true;
+	calcBarrier.synchronize();
+	subsampleBarrier.synchronize();
+	for(unsigned int i=0;i<numThreads;++i)
+		{
+		calcThreads[i].join();
+		subsampleThreads[i].join();
+		}
+	delete[] calcThreads;
+	delete[] subsampleThreads;
+	
+	/* Delete all buffers: */
+	delete[] normalBuffer;
+	for(int i=0;i<8;++i)
+		delete[] childNormalBuffers[i];
+	}
+
+void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
+	{
+	currentNode=&node;
+	
+	/* Check if this node is a leaf or an interior node: */
+	if(node.isLeaf())
+		{
+		/* Wake up the calculation threads: */
+		calcBarrier.synchronize();
+		
+		/* Wait for their completion: */
+		calcBarrier.synchronize();
+		}
+	else
+		{
+		/* Get pointers to the node's children and load their normal vector arrays: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			{
+			currentChildren[childIndex]=lpo.getChild(currentNode,childIndex);
+			if(currentChildren[childIndex]->getNumPoints()>0)
+				{
+				normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*currentChildren[childIndex]->getDataOffset());
+				normalFile.read(childNormalBuffers[childIndex],currentChildren[childIndex]->getNumPoints());
+				}
+			}
+		
+		/* Wake up the subsampling threads: */
+		subsampleBarrier.synchronize();
+		
+		/* Wait for their completion: */
+		subsampleBarrier.synchronize();
 		}
 	
 	/* Write the node's normal vectors to the normal file: */
-	normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*node.getDataOffset());
-	normalFile.write(normalBuffer,node.getNumPoints());
+	normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*currentNode->getDataOffset());
+	normalFile.write(normalBuffer,currentNode->getNumPoints());
 	
 	/* Update the progress counter: */
 	++numProcessedNodes;

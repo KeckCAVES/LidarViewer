@@ -22,6 +22,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 ***********************************************************************/
 
 #include <stdlib.h>
+#include <string.h>
 #include <string>
 #include <iostream>
 
@@ -34,6 +35,7 @@ int main(int argc,char* argv[])
 	const char* fileName=0;
 	Scalar radius=Scalar(0);
 	int cacheSize=512;
+	unsigned int numThreads=1;
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -47,6 +49,11 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				cacheSize=atoi(argv[i]);
+				}
+			else if(strcasecmp(argv[i]+1,"threads")==0)
+				{
+				++i;
+				numThreads=atoi(argv[i]);
 				}
 			}
 		else if(fileName==0)
@@ -65,7 +72,7 @@ int main(int argc,char* argv[])
 	std::string normalFileName=fileName;
 	normalFileName.push_back('/');
 	normalFileName.append("Normals");
-	NodeNormalCalculator nodeNormalCalculator(lpo,radius,normalFileName.c_str());
+	NodeNormalCalculator nodeNormalCalculator(lpo,radius,normalFileName.c_str(),numThreads);
 	std::cout<<"Calculating normal vectors...   0%"<<std::flush;
 	lpo.processNodesPostfix(nodeNormalCalculator);
 	std::cout<<std::endl;

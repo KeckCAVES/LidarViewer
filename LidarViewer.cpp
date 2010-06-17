@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -20,20 +20,27 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
+#include "LidarViewer.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <iostream>
 #include <stdexcept>
+#include <Misc/FunctionCalls.h>
 #include <Misc/ThrowStdErr.h>
 #include <Misc/File.h>
+#include <Misc/FileCharacterSource.h>
+#include <Misc/ValueSource.h>
 #include <Misc/StandardValueCoders.h>
 #include <Misc/ConfigurationFile.h>
 #include <Comm/MulticastPipe.h>
 #include <Geometry/Vector.h>
 #include <Geometry/TranslationTransformation.h>
 #include <Geometry/OrthogonalTransformation.h>
+#include <Geometry/LinearUnit.h>
 #include <GL/gl.h>
+#include <GL/GLColorTemplates.h>
 #include <GL/GLMaterial.h>
 #include <GL/GLContextData.h>
 #include <GL/GLValueCoders.h>
@@ -48,7 +55,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/Button.h>
 #include <GLMotif/CascadeButton.h>
 #include <GLMotif/Label.h>
-#include <GLMotif/TextField.h>
 #include <GLMotif/RowColumn.h>
 #include <GLMotif/Menu.h>
 #include <GLMotif/SubMenu.h>
@@ -64,6 +70,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Vrui/CoordinateManager.h>
 #include <Vrui/ToolManager.h>
 #include <Vrui/ClusterSupport.h>
+#include <Vrui/SurfaceNavigationTool.h>
 
 #include "LidarOctree.h"
 #include "LidarTool.h"
@@ -77,9 +84,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "CylinderPrimitive.h"
 #include "PointClassifier.h"
 #include "RidgeFinder.h"
+#include "ProfileTool.h"
 #include "SceneGraph.h"
-
-#include "LidarViewer.h"
+#include "LoadPointSet.h"
 
 /*********************************************
 Methods of class LidarViewer::SelectorLocator:
@@ -238,6 +245,9 @@ GLMotif::Popup* LidarViewer::createExtractionMenu(void)
 	GLMotif::Button* extractBruntonButton=new GLMotif::Button("ExtractBruntonButton",extractionMenu,"Indicate Strike+Dip");
 	extractBruntonButton->getSelectCallbacks().add(this,&LidarViewer::extractBruntonCallback);
 	
+	GLMotif::Button* extractLineButton=new GLMotif::Button("ExtractLineButton",extractionMenu,"Extract Line");
+	extractLineButton->getSelectCallbacks().add(this,&LidarViewer::extractLineCallback);
+	
 	GLMotif::Button* extractSphereButton=new GLMotif::Button("ExtractSphereButton",extractionMenu,"Extract Sphere");
 	extractSphereButton->getSelectCallbacks().add(this,&LidarViewer::extractSphereCallback);
 	
@@ -272,11 +282,11 @@ GLMotif::Popup* LidarViewer::createDialogMenu(void)
 	
 	GLMotif::SubMenu* dialogMenu=new GLMotif::SubMenu("DialogMenu",dialogMenuPopup,false);
 	
-	GLMotif::ToggleButton* showRenderDialogToggle=new GLMotif::ToggleButton("ShowRenderDialogToggle",dialogMenu,"Show Render Dialog");
+	showRenderDialogToggle=new GLMotif::ToggleButton("ShowRenderDialogToggle",dialogMenu,"Show Render Dialog");
 	showRenderDialogToggle->setToggle(false);
 	showRenderDialogToggle->getValueChangedCallbacks().add(this,&LidarViewer::showRenderDialogCallback);
 	
-	GLMotif::ToggleButton* showInteractionDialogToggle=new GLMotif::ToggleButton("ShowInteractionDialogToggle",dialogMenu,"Show Interaction Dialog");
+	showInteractionDialogToggle=new GLMotif::ToggleButton("ShowInteractionDialogToggle",dialogMenu,"Show Interaction Dialog");
 	showInteractionDialogToggle->setToggle(false);
 	showInteractionDialogToggle->getValueChangedCallbacks().add(this,&LidarViewer::showInteractionDialogCallback);
 	
@@ -323,128 +333,121 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	const GLMotif::StyleSheet& ss=*Vrui::getWidgetManager()->getStyleSheet();
 	
 	GLMotif::PopupWindow* renderDialog=new GLMotif::PopupWindow("RenderDialog",Vrui::getWidgetManager(),"Render Settings");
+	renderDialog->setCloseButton(true);
+	renderDialog->setResizableFlags(true,false);
+	renderDialog->getCloseCallbacks().add(this,&LidarViewer::renderDialogCloseCallback);
 	
 	GLMotif::RowColumn* renderSettings=new GLMotif::RowColumn("RenderSettings",renderDialog,false);
-	renderSettings->setNumMinorWidgets(2);
-	
-	/* Create a slider/textfield combo to change the rendering quality: */
-	GLMotif::Label* renderQualityLabel=new GLMotif::Label("RenderQualityLabel",renderSettings,"Render Quality");
+	renderSettings->setOrientation(GLMotif::RowColumn::VERTICAL);
+	renderSettings->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	renderSettings->setNumMinorWidgets(1);
 	
 	GLMotif::RowColumn* renderQualityBox=new GLMotif::RowColumn("RenderQualityBox",renderSettings,false);
-	renderQualityBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	renderQualityBox->setOrientation(GLMotif::RowColumn::VERTICAL);
 	renderQualityBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	renderQualityBox->setNumMinorWidgets(2);
 	
-	renderQualityValue=new GLMotif::TextField("RenderQualityValue",renderQualityBox,8);
-	renderQualityValue->setFloatFormat(GLMotif::TextField::FIXED);
-	renderQualityValue->setFieldWidth(5);
-	renderQualityValue->setPrecision(2);
-	renderQualityValue->setValue(double(renderQuality));
+	/* Create a slider/textfield combo to change the rendering quality: */
+	new GLMotif::Label("RenderQualityLabel",renderQualityBox,"Render Quality");
 	
-	renderQualitySlider=new GLMotif::Slider("RenderQualitySlider",renderQualityBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+	GLMotif::TextFieldSlider* renderQualitySlider=new GLMotif::TextFieldSlider("RenderQualitySlider",renderQualityBox,6,ss.fontHeight*10.0f);
+	renderQualitySlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
+	renderQualitySlider->getTextField()->setFieldWidth(5);
+	renderQualitySlider->getTextField()->setPrecision(2);
 	renderQualitySlider->setValueRange(-3.0,3.0,0.01);
 	renderQualitySlider->setValue(double(renderQuality));
 	renderQualitySlider->getValueChangedCallbacks().add(this,&LidarViewer::renderQualitySliderCallback);
 	
-	renderQualityBox->manageChild();
-	
 	/* Create a slider/textfield combo to change the focus+context weight: */
-	GLMotif::Label* fncWeightLabel=new GLMotif::Label("FncWeightLabel",renderSettings,"Focus + Context");
+	new GLMotif::Label("FncWeightLabel",renderQualityBox,"Focus + Context");
 	
-	GLMotif::RowColumn* fncWeightBox=new GLMotif::RowColumn("FncWeightBox",renderSettings,false);
-	fncWeightBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
-	fncWeightBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
-	
-	fncWeightValue=new GLMotif::TextField("FncWeightValue",fncWeightBox,8);
-	fncWeightValue->setFloatFormat(GLMotif::TextField::FIXED);
-	fncWeightValue->setFieldWidth(5);
-	fncWeightValue->setPrecision(2);
-	fncWeightValue->setValue(double(fncWeight));
-	
-	fncWeightSlider=new GLMotif::Slider("FncWeightSlider",fncWeightBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+	GLMotif::TextFieldSlider* fncWeightSlider=new GLMotif::TextFieldSlider("FncWeightSlider",renderQualityBox,6,ss.fontHeight*10.0f);
+	fncWeightSlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
+	fncWeightSlider->getTextField()->setFieldWidth(5);
+	fncWeightSlider->getTextField()->setPrecision(2);
 	fncWeightSlider->setValueRange(0.0,2.0,0.01);
 	fncWeightSlider->setValue(double(fncWeight));
 	fncWeightSlider->getValueChangedCallbacks().add(this,&LidarViewer::fncWeightSliderCallback);
 	
-	fncWeightBox->manageChild();
-	
 	/* Create a slider/textfield combo to change the point size: */
-	GLMotif::Label* pointSizeLabel=new GLMotif::Label("PointSizeLabel",renderSettings,"Point Size");
+	new GLMotif::Label("PointSizeLabel",renderQualityBox,"Point Size");
 	
-	GLMotif::RowColumn* pointSizeBox=new GLMotif::RowColumn("PointSizeBox",renderSettings,false);
-	pointSizeBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
-	pointSizeBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
-	
-	pointSizeValue=new GLMotif::TextField("PointSizeValue",pointSizeBox,8);
-	pointSizeValue->setFloatFormat(GLMotif::TextField::FIXED);
-	pointSizeValue->setFieldWidth(3);
-	pointSizeValue->setPrecision(1);
-	pointSizeValue->setValue(double(pointSize));
-	
-	pointSizeSlider=new GLMotif::Slider("PointSizeSlider",pointSizeBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+	GLMotif::TextFieldSlider* pointSizeSlider=new GLMotif::TextFieldSlider("PointSizeSlider",renderQualityBox,6,ss.fontHeight*10.0f);
+	pointSizeSlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
+	pointSizeSlider->getTextField()->setFieldWidth(4);
+	pointSizeSlider->getTextField()->setPrecision(1);
 	pointSizeSlider->setValueRange(1.0,10.0,0.5);
 	pointSizeSlider->setValue(double(pointSize));
 	pointSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::pointSizeSliderCallback);
 	
-	pointSizeBox->manageChild();
+	renderQualityBox->manageChild();
 	
 	if(octree->hasNormalVectors())
 		{
-		/* Create a toggle button to enable point-based lighting: */
-		GLMotif::Margin* enableLightingToggleMargin=new GLMotif::Margin("EnableLightingToggleMargin",renderSettings,false);
-		enableLightingToggleMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::HFILL,GLMotif::Alignment::VCENTER));
+		new GLMotif::Separator("Separator1",renderSettings,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
 		
-		GLMotif::ToggleButton* enableLightingToggle=new GLMotif::ToggleButton("EnableLightingToggle",enableLightingToggleMargin,"Lighting");
+		GLMotif::RowColumn* lightingBox=new GLMotif::RowColumn("LightingBox",renderSettings,false);
+		lightingBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+		lightingBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+		lightingBox->setNumMinorWidgets(2);
+		
+		/* Create a toggle button to enable point-based lighting: */
+		GLMotif::Margin* enableLightingMargin=new GLMotif::Margin("EnableLightingMargin",lightingBox,false);
+		enableLightingMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::LEFT,GLMotif::Alignment::VCENTER));
+		
+		GLMotif::ToggleButton* enableLightingToggle=new GLMotif::ToggleButton("EnableLightingToggle",enableLightingMargin,"Lighting");
+		enableLightingToggle->setBorderWidth(0.0f);
+		enableLightingToggle->setHAlignment(GLFont::Left);
 		enableLightingToggle->setToggle(pointBasedLighting);
 		enableLightingToggle->getValueChangedCallbacks().add(this,&LidarViewer::enableLightingCallback);
 		
-		enableLightingToggleMargin->manageChild();
+		enableLightingMargin->manageChild();
 		
-		/* Create a box to control lighting parameters: */
-		GLMotif::RowColumn* lightingBox=new GLMotif::RowColumn("LightingBox",renderSettings,false);
-		lightingBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+		/* Create a toggle button to enable point colors: */
+		GLMotif::Margin* usePointColorsMargin=new GLMotif::Margin("UsePointColorsMargin",lightingBox,false);
+		usePointColorsMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::LEFT,GLMotif::Alignment::VCENTER));
 		
-		/* Create a row of toggle buttons: */
-		GLMotif::RowColumn* buttonBox=new GLMotif::RowColumn("ButtonBox",lightingBox,false);
-		buttonBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
-		buttonBox->setPacking(GLMotif::RowColumn::PACK_GRID);
-		
-		GLMotif::ToggleButton* usePointColorsToggle=new GLMotif::ToggleButton("UsePointColorsToggle",buttonBox,"Use Point Colors");
+		GLMotif::ToggleButton* usePointColorsToggle=new GLMotif::ToggleButton("UsePointColorsToggle",usePointColorsMargin,"Use Point Colors");
+		usePointColorsToggle->setBorderWidth(0.0f);
+		usePointColorsToggle->setHAlignment(GLFont::Left);
 		usePointColorsToggle->setToggle(usePointColors);
 		usePointColorsToggle->getValueChangedCallbacks().add(this,&LidarViewer::usePointColorsCallback);
 		
-		GLMotif::ToggleButton* enableSunToggle=new GLMotif::ToggleButton("SunToggle",buttonBox,"Sun Light Source");
+		usePointColorsMargin->manageChild();
+		
+		/* Create a toggle button to enable a fixed-position light source: */
+		GLMotif::Margin* enableSunMargin=new GLMotif::Margin("EnableSunMargin",lightingBox,false);
+		enableSunMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::LEFT,GLMotif::Alignment::VCENTER));
+		
+		GLMotif::ToggleButton* enableSunToggle=new GLMotif::ToggleButton("SunToggle",enableSunMargin,"Sun Light Source");
+		enableSunToggle->setBorderWidth(0.0f);
+		enableSunToggle->setHAlignment(GLFont::Left);
 		enableSunToggle->setToggle(enableSun);
 		enableSunToggle->getValueChangedCallbacks().add(this,&LidarViewer::enableSunCallback);
 		
-		buttonBox->manageChild();
+		enableSunMargin->manageChild();
 		
 		/* Create a box with a pair of sliders to control the sun light source: */
 		GLMotif::RowColumn* sunBox=new GLMotif::RowColumn("SunBox",lightingBox,false);
 		sunBox->setOrientation(GLMotif::RowColumn::VERTICAL);
-		sunBox->setNumMinorWidgets(3);
+		sunBox->setNumMinorWidgets(2);
 		
 		new GLMotif::Label("SunAzimuthLabel",sunBox,"Azimuth");
 		
-		sunAzimuthValue=new GLMotif::TextField("SunAzimuthValue",sunBox,5);
-		sunAzimuthValue->setFloatFormat(GLMotif::TextField::FIXED);
-		sunAzimuthValue->setFieldWidth(3);
-		sunAzimuthValue->setPrecision(0);
-		sunAzimuthValue->setValue(double(sunAzimuth));
-		
-		sunAzimuthSlider=new GLMotif::Slider("SunAzimuthSlider",sunBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+		GLMotif::TextFieldSlider* sunAzimuthSlider=new GLMotif::TextFieldSlider("SunAzimuthSlider",sunBox,6,ss.fontHeight*10.0f);
+		sunAzimuthSlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
+		sunAzimuthSlider->getTextField()->setFieldWidth(3);
+		sunAzimuthSlider->getTextField()->setPrecision(0);
 		sunAzimuthSlider->setValueRange(0.0,360.0,1.0);
 		sunAzimuthSlider->setValue(double(sunAzimuth));
 		sunAzimuthSlider->getValueChangedCallbacks().add(this,&LidarViewer::sunAzimuthSliderCallback);
 		
 		new GLMotif::Label("SunElevationLabel",sunBox,"Elevation");
 		
-		sunElevationValue=new GLMotif::TextField("SunElevationValue",sunBox,5);
-		sunElevationValue->setFloatFormat(GLMotif::TextField::FIXED);
-		sunElevationValue->setFieldWidth(2);
-		sunElevationValue->setPrecision(0);
-		sunElevationValue->setValue(double(sunElevation));
-		
-		sunElevationSlider=new GLMotif::Slider("SunElevationSlider",sunBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
+		GLMotif::TextFieldSlider* sunElevationSlider=new GLMotif::TextFieldSlider("SunElevationSlider",sunBox,6,ss.fontHeight*10.0f);
+		sunElevationSlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
+		sunElevationSlider->getTextField()->setFieldWidth(2);
+		sunElevationSlider->getTextField()->setPrecision(0);
 		sunElevationSlider->setValueRange(0.0,90.0,1.0);
 		sunElevationSlider->setValue(double(sunElevation));
 		sunElevationSlider->getValueChangedCallbacks().add(this,&LidarViewer::sunElevationSliderCallback);
@@ -454,26 +457,35 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 		lightingBox->manageChild();
 		}
 	
+	new GLMotif::Separator("Separator2",renderSettings,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
+	
+	GLMotif::RowColumn* texturePlaneBox=new GLMotif::RowColumn("DistanceBox",renderSettings,false);
+	texturePlaneBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+	texturePlaneBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	texturePlaneBox->setNumMinorWidgets(2);
+	
 	/* Create a toggle button to enable plane distance visualization: */
-	GLMotif::ToggleButton* enableTextureToggle=new GLMotif::ToggleButton("EnableTextureToggle",renderSettings,"Show Plane Distance");
-	enableTextureToggle->setToggle(useTexturePlane);
-	enableTextureToggle->getValueChangedCallbacks().add(this,&LidarViewer::enableTexturePlaneCallback);
-
-	GLMotif::RowColumn* texturePlaneScaleBox=new GLMotif::RowColumn("TexturePlaneScaleBox",renderSettings,false);
-	texturePlaneScaleBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
-	texturePlaneScaleBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	GLMotif::Margin* enableTexturePlaneMargin=new GLMotif::Margin("EnableTexturePlaneMargin",texturePlaneBox,false);
+	enableTexturePlaneMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::LEFT,GLMotif::Alignment::VCENTER));
 	
-	texturePlaneScaleValue=new GLMotif::TextField("TexturePlaneScaleValue",texturePlaneScaleBox,8);
-	texturePlaneScaleValue->setFieldWidth(8);
-	texturePlaneScaleValue->setPrecision(3);
-	texturePlaneScaleValue->setValue(double(texturePlaneScale));
+	GLMotif::ToggleButton* enableTexturePlaneToggle=new GLMotif::ToggleButton("EnableTexturePlaneToggle",enableTexturePlaneMargin,"Show Plane Distance");
+	enableTexturePlaneToggle->setBorderWidth(0.0f);
+	enableTexturePlaneToggle->setHAlignment(GLFont::Left);
+	enableTexturePlaneToggle->setToggle(useTexturePlane);
+	enableTexturePlaneToggle->getValueChangedCallbacks().add(this,&LidarViewer::enableTexturePlaneCallback);
 	
-	texturePlaneScaleSlider=new GLMotif::Slider("TexturePlaneScaleSlider",texturePlaneScaleBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
-	texturePlaneScaleSlider->setValueRange(-1.0,4.0,0.1);
-	texturePlaneScaleSlider->setValue(Math::log10(double(texturePlaneScale)));
+	enableTexturePlaneMargin->manageChild();
+	
+	/* Create a slider to select the plane distance visualization scale: */
+	GLMotif::TextFieldSlider* texturePlaneScaleSlider=new GLMotif::TextFieldSlider("TexturePlaneScaleSlider",texturePlaneBox,8,ss.fontHeight*10.0f);
+	texturePlaneScaleSlider->getTextField()->setFieldWidth(8);
+	texturePlaneScaleSlider->getTextField()->setPrecision(3);
+	texturePlaneScaleSlider->setSliderMapping(GLMotif::TextFieldSlider::EXP10);
+	texturePlaneScaleSlider->setValueRange(0.01,10000.0,0.1);
+	texturePlaneScaleSlider->setValue(double(texturePlaneScale));
 	texturePlaneScaleSlider->getValueChangedCallbacks().add(this,&LidarViewer::texturePlaneScaleSliderCallback);
 	
-	texturePlaneScaleBox->manageChild();
+	texturePlaneBox->manageChild();
 	
 	renderSettings->manageChild();
 	
@@ -485,72 +497,86 @@ GLMotif::PopupWindow* LidarViewer::createInteractionDialog(void)
 	const GLMotif::StyleSheet& ss=*Vrui::getWidgetManager()->getStyleSheet();
 	
 	GLMotif::PopupWindow* interactionDialog=new GLMotif::PopupWindow("InteractionDialog",Vrui::getWidgetManager(),"Interaction Settings");
+	interactionDialog->setCloseButton(true);
+	interactionDialog->setResizableFlags(true,false);
+	interactionDialog->getCloseCallbacks().add(this,&LidarViewer::interactionDialogCloseCallback);
 	
 	GLMotif::RowColumn* interactionSettings=new GLMotif::RowColumn("InteractionSettings",interactionDialog,false);
+	interactionSettings->setOrientation(GLMotif::RowColumn::VERTICAL);
+	interactionSettings->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	interactionSettings->setNumMinorWidgets(1);
 	
-	GLMotif::ToggleButton* overrideToolsToggle=new GLMotif::ToggleButton("OverrideToolsToggle",interactionSettings,"Override Tools");
+	/* Create a box with tool settings: */
+	GLMotif::Margin* toolSettingsMargin=new GLMotif::Margin("ToolSettingsMargin",interactionSettings,false);
+	toolSettingsMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::LEFT,GLMotif::Alignment::VCENTER));
+	
+	GLMotif::RowColumn* toolSettingsBox=new GLMotif::RowColumn("ToolSettingsBox",toolSettingsMargin,false);
+	toolSettingsBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	toolSettingsBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	toolSettingsBox->setNumMinorWidgets(1);
+	
+	/* Create a toggle button to override existing tools' settings: */
+	GLMotif::ToggleButton* overrideToolsToggle=new GLMotif::ToggleButton("OverrideToolsToggle",toolSettingsBox,"Override Tools");
+	overrideToolsToggle->setBorderWidth(0.0f);
+	overrideToolsToggle->setHAlignment(GLFont::Left);
 	overrideToolsToggle->setToggle(overrideTools);
 	overrideToolsToggle->getValueChangedCallbacks().add(this,&LidarViewer::overrideToolsCallback);
 	
-	/* Create a slider/textfield combo to change the interaction sphere size: */
-	GLMotif::RowColumn* brushSizeBox=new GLMotif::RowColumn("BrushSize",interactionSettings,false);
-	brushSizeBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	new GLMotif::Separator("Separator1",toolSettingsBox,GLMotif::Separator::VERTICAL,0.0f,GLMotif::Separator::LOWERED);
 	
-	GLMotif::Label* brushSizeLabel=new GLMotif::Label("BrushSizeLabel",brushSizeBox,"Brush Size");
+	/* Create a radio box to select selection modes: */
+	interactionDialogSelectorModes=new GLMotif::RadioBox("InteractionDialogSelectorModes",toolSettingsBox,false);
+	interactionDialogSelectorModes->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	interactionDialogSelectorModes->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	interactionDialogSelectorModes->setSelectionMode(GLMotif::RadioBox::ALWAYS_ONE);
 	
-	brushSizeValue=new GLMotif::TextField("BrushSizeValue",brushSizeBox,7);
-	brushSizeValue->setFieldWidth(7);
-	brushSizeValue->setPrecision(3);
-	brushSizeValue->setValue(double(brushSize));
-	
-	GLMotif::Slider* brushSizeSlider=new GLMotif::Slider("BrushSizeSlider",brushSizeBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
-	brushSizeSlider->setValueRange(double(brushSize)*0.1,double(brushSize)*5.0,double(brushSize)*0.01);
-	brushSizeSlider->setValue(double(brushSize));
-	brushSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::brushSizeSliderCallback);
-	
-	brushSizeBox->manageChild();
-	
-	/* Create a radio box to select interaction modes: */
-	GLMotif::RadioBox* selectorModes=new GLMotif::RadioBox("SelectorModes",interactionSettings,false);
-	selectorModes->setOrientation(GLMotif::RowColumn::HORIZONTAL);
-	selectorModes->setPacking(GLMotif::RowColumn::PACK_GRID);
-	selectorModes->setSelectionMode(GLMotif::RadioBox::ALWAYS_ONE);
-	
-	selectorModes->addToggle("Add");
-	selectorModes->addToggle("Subtract");
+	interactionDialogSelectorModes->addToggle("Add");
+	interactionDialogSelectorModes->addToggle("Subtract");
 	
 	switch(defaultSelectorMode)
 		{
 		case SelectorLocator::ADD:
-			selectorModes->setSelectedToggle(0);
+			interactionDialogSelectorModes->setSelectedToggle(0);
 			break;
 		
 		case SelectorLocator::SUBTRACT:
-			selectorModes->setSelectedToggle(1);
+			interactionDialogSelectorModes->setSelectedToggle(1);
 			break;
 		}
-	selectorModes->getValueChangedCallbacks().add(this,&LidarViewer::changeSelectorModeCallback);
-	selectorModes->manageChild();
+	interactionDialogSelectorModes->getValueChangedCallbacks().add(this,&LidarViewer::changeSelectorModeCallback);
+	interactionDialogSelectorModes->manageChild();
 	
-	interactionDialogSelectorModes=selectorModes;
+	toolSettingsBox->manageChild();
+	toolSettingsMargin->manageChild();
 	
-	/* Create a slider/textfield combo to change the point classification neighborhood size: */
-	GLMotif::RowColumn* neighborhoodSizeBox=new GLMotif::RowColumn("NeighborhoodSize",interactionSettings,false);
-	neighborhoodSizeBox->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	/* Create a box with sliders to adjust interaction sizes: */
+	GLMotif::RowColumn* sliderBox=new GLMotif::RowColumn("SliderBox",interactionSettings,false);
+	sliderBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+	sliderBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	sliderBox->setNumMinorWidgets(2);
 	
-	GLMotif::Label* neighborhoodSizeLabel=new GLMotif::Label("NeighborhoodSizeLabel",neighborhoodSizeBox,"Neighborhood Size");
+	/* Create a slider to change the size of the selection brush: */
+	new GLMotif::Label("BrushSizeLabel",sliderBox,"Brush Size");
 	
-	neighborhoodSizeValue=new GLMotif::TextField("NeighborhoodSizeValue",neighborhoodSizeBox,7);
-	neighborhoodSizeValue->setFieldWidth(7);
-	neighborhoodSizeValue->setPrecision(3);
-	neighborhoodSizeValue->setValue(double(neighborhoodSize));
+	GLMotif::TextFieldSlider* brushSizeSlider=new GLMotif::TextFieldSlider("BrushSizeSlider",sliderBox,8,ss.fontHeight*10.0f);
+	brushSizeSlider->getTextField()->setFieldWidth(7);
+	brushSizeSlider->getTextField()->setPrecision(4);
+	brushSizeSlider->setValueRange(double(brushSize)*0.1,double(brushSize)*5.0,double(brushSize)*0.01);
+	brushSizeSlider->setValue(double(brushSize));
+	brushSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::brushSizeSliderCallback);
 	
-	GLMotif::Slider* neighborhoodSizeSlider=new GLMotif::Slider("NeighborhoodSizeSlider",neighborhoodSizeBox,GLMotif::Slider::HORIZONTAL,ss.fontHeight*10.0f);
-	neighborhoodSizeSlider->setValueRange(-3.0,3.0,0.1);
-	neighborhoodSizeSlider->setValue(Math::log(double(neighborhoodSize)));
+	/* Create a slider to change the size of the processing neighborhood: */
+	new GLMotif::Label("NeighborhoodSizeLabel",sliderBox,"Neighborhood Size");
+	
+	GLMotif::TextFieldSlider* neighborhoodSizeSlider=new GLMotif::TextFieldSlider("NeighborhoodSizeSlider",sliderBox,8,ss.fontHeight*10.0f);
+	neighborhoodSizeSlider->getTextField()->setFieldWidth(7);
+	neighborhoodSizeSlider->getTextField()->setPrecision(4);
+	neighborhoodSizeSlider->setSliderMapping(GLMotif::TextFieldSlider::EXP10);
+	neighborhoodSizeSlider->setValueRange(10.0e-3,10.0e3,0.1);
+	neighborhoodSizeSlider->setValue(double(neighborhoodSize));
 	neighborhoodSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::neighborhoodSizeSliderCallback);
 	
-	neighborhoodSizeBox->manageChild();
+	sliderBox->manageChild();
 	
 	interactionSettings->manageChild();
 	
@@ -689,7 +715,7 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 lastPickedPrimitive(-1),
 	 mainMenu(0),renderDialog(0)
 	{
-	unsigned int memCacheSize=512;
+	memCacheSize=512;
 	unsigned int gfxCacheSize=128;
 	try
 		{
@@ -773,6 +799,7 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		else if(!haveOctreeFile)
 			{
 			/* Load a LiDAR octree file: */
+			lidarFileName=argv[i];
 			octree=new LidarOctree(argv[i],size_t(memCacheSize)*size_t(1024*1024),size_t(gfxCacheSize)*size_t(1024*1024));
 			
 			haveOctreeFile=true;
@@ -788,8 +815,35 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	octree->setRenderQuality(renderQuality);
 	octree->setTreeUpdateFunction(treeUpdateNotificationCB,0);
 	
-	/* Register a coordinate transform object to undo the coordinate offset done by the octree object: */
-	Vrui::getCoordinateManager()->setCoordinateTransform(new Vrui::OrthogonalCoordinateTransform(Vrui::OGTransform::translate(Vrui::Vector(-octree->getPointOffset()))));
+	try
+		{
+		/* Check if the octree file contains a unit file: */
+		Misc::FileCharacterSource unitFile((lidarFileName+"/Unit").c_str());
+		Misc::ValueSource unit(unitFile);
+		unit.skipWs();
+		Vrui::Scalar unitFactor=Vrui::Scalar(unit.readNumber());
+		std::string unitName=unit.readString();
+		Vrui::getCoordinateManager()->setUnit(Geometry::LinearUnit(unitName.c_str(),unitFactor));
+		}
+	catch(std::runtime_error)
+		{
+		/* Ignore the error and carry on... */
+		}
+	
+	/* Register a coordinate transform object to undo the coordinate offset done by the octree object and LiDAR preprocessor: */
+	Vrui::Vector offset=octree->getPointOffset();
+	try
+		{
+		/* Check if the octree file contains an offset file: */
+		Misc::File offsetFile((lidarFileName+"/Offset").c_str(),"rb",Misc::File::LittleEndian);
+		for(int i=0;i<3;++i)
+			offset[i]-=offsetFile.read<double>();
+		}
+	catch(std::runtime_error)
+		{
+		/* Ignore the error and carry on... */
+		}
+	Vrui::getCoordinateManager()->setCoordinateTransform(new Vrui::OrthogonalCoordinateTransform(Vrui::OGTransform::translate(-offset)));
 	
 	/* Create the sun lightsource: */
 	sun=Vrui::getLightsourceManager()->createLightsource(false);
@@ -807,9 +861,11 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	/* Initialize the navigation transformation: */
 	centerDisplayCallback(0);
 	
-	/* Register the custom tool class with the Vrui tool manager: */
+	/* Register the custom tool classes with the Vrui tool manager: */
 	LidarToolFactory* lidarToolFactory=new LidarToolFactory(*Vrui::getToolManager(),octree);
 	Vrui::getToolManager()->addClass(lidarToolFactory,LidarToolFactory::factoryDestructor);
+	ProfileToolFactory* profileToolFactory=new ProfileToolFactory(*Vrui::getToolManager(),octree);
+	Vrui::getToolManager()->addClass(profileToolFactory,ProfileToolFactory::factoryDestructor);
 	
 	/* Initialize the scene graph: */
 	createSceneGraph();
@@ -900,6 +956,14 @@ void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackDa
 		{
 		/* Register a dragging tool callback with the new dragging tool: */
 		dtool->getDragStartCallbacks().add(this,&LidarViewer::draggingToolCallback);
+		}
+	
+	/* Check if the new tool is a surface navigation tool: */
+	Vrui::SurfaceNavigationTool* surfaceNavigationTool=dynamic_cast<Vrui::SurfaceNavigationTool*>(cbData->tool);
+	if(surfaceNavigationTool!=0)
+		{
+		/* Set the new tool's alignment function: */
+		surfaceNavigationTool->setAlignFunction(Misc::createFunctionCall<Vrui::NavTransform&,LidarViewer>(this,&LidarViewer::alignSurfaceFrame));
 		}
 	}
 
@@ -1039,6 +1103,36 @@ void LidarViewer::display(GLContextData& contextData) const
 		(*pIt)->glRenderAction(contextData);
 	}
 
+void LidarViewer::alignSurfaceFrame(Vrui::NavTransform& surfaceFrame)
+	{
+	/* Get the frame's base point: */
+	Vrui::Point base=surfaceFrame.getOrigin();
+	
+	/* Intersect a vertical ray with the LiDAR data set: */
+	LidarOctree::Ray modelRay(base+Vrui::Vector(0,0,1000),Vector(0,0,-1));
+	Scalar lambda;
+	if(Vrui::isMaster())
+		{
+		/* Calculate the ray's intersection parameter: */
+		lambda=octree->intersectRay(modelRay,Scalar(0.002));
+		if(Vrui::getMainPipe()!=0)
+			{
+			/* Send the intersection parameter to the slaves: */
+			Vrui::getMainPipe()->write<Scalar>(lambda);
+			// Vrui::getMainPipe()->finishMessage();
+			}
+		}
+	else
+		Vrui::getMainPipe()->read<Scalar>(lambda);
+	
+	/* Move the frame's base point: */
+	if(lambda>=Scalar(0))
+		base=modelRay(lambda);
+	
+	/* Align the frame with the terrain's x and y directions: */
+	surfaceFrame=Vrui::NavTransform(base-Vrui::Point::origin,Vrui::Rotation::identity,surfaceFrame.getScaling());
+	}
+
 void LidarViewer::centerDisplayCallback(Misc::CallbackData* cbData)
 	{
 	/* Initialize the navigation transformation: */
@@ -1095,10 +1189,10 @@ void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
 	if(Vrui::isMaster())
 		{
 		/* Create a selection saver functor: */
-		LidarSelectionSaver lss("SelectedPoints.xyzrgb",octree->getPointOffset());
+		LidarSelectionSaver lss("SelectedPoints.xyzuvwrgb",octree->getPointOffset());
 		
 		/* Save all selected points: */
-		octree->processSelectedPoints(lss);
+		octree->processSelectedPointsWithNormals(lss);
 		}
 	}
 
@@ -1153,6 +1247,26 @@ void LidarViewer::extractBruntonCallback(Misc::CallbackData* cbData)
 		{
 		if(Vrui::isMaster())
 			std::cerr<<"Did not extract brunton due to exception "<<err.what()<<std::endl;
+		}
+	}
+
+void LidarViewer::extractLineCallback(Misc::CallbackData* cbData)
+	{
+	try
+		{
+		LinePrimitive* primitive;
+		if(Vrui::isMaster())
+			primitive=new LinePrimitive(octree,extractorPipe);
+		else
+			primitive=new LinePrimitive(extractorPipe);
+		
+		/* Store the primitive: */
+		lastPickedPrimitive=addPrimitive(primitive);
+		}
+	catch(std::runtime_error err)
+		{
+		if(Vrui::isMaster())
+			std::cerr<<"Did not extract line due to exception "<<err.what()<<std::endl;
 		}
 	}
 
@@ -1379,34 +1493,25 @@ void LidarViewer::showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCa
 		}
 	}
 
-void LidarViewer::renderQualitySliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::renderQualitySliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new render quality: */
 	renderQuality=Scalar(cbData->value);
-	
-	/* Update the render quality value label: */
-	renderQualityValue->setValue(double(cbData->value));
 	
 	/* Set the octree's render quality: */
 	octree->setRenderQuality(renderQuality);
 	}
 
-void LidarViewer::fncWeightSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::fncWeightSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new focus+context weight: */
 	fncWeight=Scalar(cbData->value);
-	
-	/* Update the focus+context weight value label: */
-	fncWeightValue->setValue(double(cbData->value));
 	}
 
-void LidarViewer::pointSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new point size: */
 	pointSize=cbData->value;
-	
-	/* Update the point size value label: */
-	pointSizeValue->setValue(double(cbData->value));
 	}
 
 void LidarViewer::enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
@@ -1425,25 +1530,19 @@ void LidarViewer::enableSunCallback(GLMotif::ToggleButton::ValueChangedCallbackD
 	setEnableSun(cbData->set);
 	}
 
-void LidarViewer::sunAzimuthSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::sunAzimuthSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Update the sun azimuth angle: */
 	sunAzimuth=Vrui::Scalar(cbData->value);
-	
-	/* Update the sun azimuth value label: */
-	sunAzimuthValue->setValue(double(cbData->value));
 	
 	/* Update the sun light source: */
 	updateSun();
 	}
 
-void LidarViewer::sunElevationSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::sunElevationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Update the sun elevation angle: */
 	sunElevation=Vrui::Scalar(cbData->value);
-	
-	/* Update the sun elevation value label: */
-	sunElevationValue->setValue(double(cbData->value));
 	
 	/* Update the sun light source: */
 	updateSun();
@@ -1454,13 +1553,15 @@ void LidarViewer::enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChanged
 	useTexturePlane=cbData->set;
 	}
 
-void LidarViewer::texturePlaneScaleSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new texture plane scaling factor: */
-	texturePlaneScale=Math::pow(10.0,double(cbData->value));
-	
-	/* Update the texture plane scale value label: */
-	texturePlaneScaleValue->setValue(double(texturePlaneScale));
+	texturePlaneScale=cbData->value;
+	}
+
+void LidarViewer::renderDialogCloseCallback(Misc::CallbackData* cbData)
+	{
+	showRenderDialogToggle->setToggle(false);
 	}
 
 void LidarViewer::showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
@@ -1488,13 +1589,10 @@ void LidarViewer::overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallb
 		}
 	}
 
-void LidarViewer::brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::brushSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new brush size: */
 	brushSize=cbData->value;
-	
-	/* Update the brush size value label: */
-	brushSizeValue->setValue(double(cbData->value));
 	
 	if(overrideTools)
 		{
@@ -1504,13 +1602,15 @@ void LidarViewer::brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackD
 		}
 	}
 
-void LidarViewer::neighborhoodSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData)
+void LidarViewer::neighborhoodSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
 	{
 	/* Get the new neighborhood size: */
-	neighborhoodSize=Scalar(Math::pow(10.0,double(cbData->value)));
-	
-	/* Update the neighborhood size value label: */
-	neighborhoodSizeValue->setValue(double(neighborhoodSize));
+	neighborhoodSize=Scalar(cbData->value);
+	}
+
+void LidarViewer::interactionDialogCloseCallback(Misc::CallbackData* cbData)
+	{
+	showInteractionDialogToggle->setToggle(false);
 	}
 
 void LidarViewer::updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)

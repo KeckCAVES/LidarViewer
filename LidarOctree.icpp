@@ -137,6 +137,47 @@ LidarOctree::deselectPointsInNode(
 		++node->pointsVersion;
 	}
 
+template <class VertexParam,class PointProcessorParam>
+inline
+void
+LidarOctree::processPointsInBox(
+	const Box& box,
+	const LidarOctree::Node* node,
+	PointProcessorParam& pp) const
+	{
+	/* Bail out if the node does not overlap the box: */
+	if(node->domain.compareBox(box)==Cube::SEPARATE)
+		return;
+	
+	if(node->children!=0)
+		{
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processPointsInBox<VertexParam,PointProcessorParam>(box,&node->children[childIndex],pp);
+		}
+	else if(node->numPoints>0)
+		{
+		const VertexParam* points=static_cast<const VertexParam*>(node->points);
+		for(unsigned int i=0;i<node->numPoints;++i)
+			if(box.contains(points[i].position))
+				{
+				/* Process the point's original LiDAR value: */
+				LidarPoint lp=points[i].position;
+				if(node->selectedPointColors!=0)
+					{
+					for(int j=0;j<4;++j)
+						lp.value[j]=node->selectedPointColors[i][j];
+					}
+				else
+					{
+					for(int j=0;j<4;++j)
+						lp.value[j]=points[i].color[j];
+					}
+				pp(lp);
+				}
+		}
+	}
+
 namespace {
 
 /*******************************************************************
@@ -327,6 +368,64 @@ LidarOctree::processSelectedPoints(
 				for(int j=0;j<4;++j)
 					lp.value[j]=node->selectedPointColors[i][j];
 				pp(lp);
+				}
+		}
+	}
+
+template <class PointNormalProcessorParam>
+inline
+void
+LidarOctree::processSelectedPointsWithNormals(
+	const LidarOctree::Node* node,
+	PointNormalProcessorParam& pp) const
+	{
+	if(node->children!=0)
+		{
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processSelectedPointsWithNormals<PointNormalProcessorParam>(&node->children[childIndex],pp);
+		}
+	else if(node->selectedPoints!=0)
+		{
+		/* Process all selected points in this node: */
+		const NVertex* points=static_cast<const NVertex*>(node->points);
+		for(unsigned int i=0;i<node->numPoints;++i)
+			if(node->selectedPoints[i])
+				{
+				/* Process the point's original LiDAR value and normal vector: */
+				LidarPoint lp=points[i].position;
+				for(int j=0;j<4;++j)
+					lp.value[j]=node->selectedPointColors[i][j];
+				pp(lp,points[i].normal);
+				}
+		}
+	}
+
+template <class PointNormalProcessorParam>
+inline
+void
+LidarOctree::processSelectedPointsWithNullNormals(
+	const LidarOctree::Node* node,
+	PointNormalProcessorParam& pp) const
+	{
+	if(node->children!=0)
+		{
+		/* Recurse into the node's children: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			processSelectedPointsWithNullNormals<PointNormalProcessorParam>(&node->children[childIndex],pp);
+		}
+	else if(node->selectedPoints!=0)
+		{
+		/* Process all selected points in this node: */
+		const Vertex* points=static_cast<const Vertex*>(node->points);
+		for(unsigned int i=0;i<node->numPoints;++i)
+			if(node->selectedPoints[i])
+				{
+				/* Process the point's original LiDAR value: */
+				LidarPoint lp=points[i].position;
+				for(int j=0;j<4;++j)
+					lp.value[j]=node->selectedPointColors[i][j];
+				pp(lp,Vector::zero);
 				}
 		}
 	}

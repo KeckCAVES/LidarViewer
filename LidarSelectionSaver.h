@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarSelectionSaver - Point processor functor class to save the set of
 selected points to a file
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -51,6 +51,12 @@ class LidarSelectionSaver
 		/* Write the point to the selection file: */
 		Point op=lp+pointOffset;
 		fprintf(selectionFile.getFilePtr(),"%.6f %.6f %.6f %u %u %u\n",op[0],op[1],op[2],(unsigned int)lp.value[0],(unsigned int)lp.value[1],(unsigned int)lp.value[2]);
+		};
+	void operator()(const LidarPoint& lp,const Vector& normal) // Process the given LiDAR point plus normal vector
+		{
+		/* Write the point to the selection file: */
+		Point op=lp+pointOffset;
+		fprintf(selectionFile.getFilePtr(),"%.6f %.6f %.6f %.5f %.5f %.5f %u %u %u\n",op[0],op[1],op[2],normal[0],normal[1],normal[2],(unsigned int)lp.value[0],(unsigned int)lp.value[1],(unsigned int)lp.value[2]);
 		};
 	};
 

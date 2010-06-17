@@ -1,6 +1,6 @@
 ========================================================================
-README for LiDAR Viewer version 2.5
-Copyright (c) 2004-2009 Oliver Kreylos
+README for LiDAR Viewer version 2.6
+Copyright (c) 2004-2010 Oliver Kreylos
 ========================================================================
 
 Overview
@@ -37,7 +37,7 @@ rates.
 Requirements
 ============
 
-LiDAR Viewer version 2.5 requires Vrui version 1.0 build 065 or newer.
+LiDAR Viewer version 2.6 requires Vrui version 2.0 build pre or newer.
 
 Installation Guide
 ==================
@@ -53,18 +53,18 @@ be used; installation (to a system directory such as /usr/local) is
 only recommended if LiDAR Viewer will be used from multiple user
 accounts.
 
-0. Install Vrui from ~/src/Vrui-1.0 (see Vrui README file).
+0. Install Vrui from ~/src/Vrui-2.0 (see Vrui README file).
 
 1. Change into ~/src directory and unpack the LiDAR Viewer tarball:
    > cd ~/src
-   > tar xfz <download path>/LidarViewer-2.5.tar.gz
+   > tar xfz <download path>/LidarViewer-2.6.tar.gz
    - or -
-   > tar xf <download path>/LidarViewer-2.5.tar
+   > tar xf <download path>/LidarViewer-2.6.tar
 
 2. Change into LiDAR Viewer base directory:
-   > cd LidarViewer-2.5
+   > cd LidarViewer-2.6
 
-3. Adapt makefile if Vrui installation path is *not* ~/Vrui-1.0 by
+3. Adapt makefile if Vrui installation path is *not* ~/Vrui-2.0 by
    setting the VRUIDIR variable to the correct location. VRUIDIR is
    *not* the directory containing Vrui's sources (and the Vrui README
    file), but the directory specified via the INSTALLDIR variable in
@@ -98,15 +98,15 @@ accounts.
    LidarViewer.cfg configuration file into <INSTALLDIR>/etc.
 
 7. Optional: Add directory containing the LiDAR Viewer executables
-   (~/src/LidarViewer-2.5/bin in the default installation,
+   (~/src/LidarViewer-2.6/bin in the default installation,
    <INSTALLDIR>/bin otherwise) to the user's search path. This allows
    running LiDAR Viewer from any directory. Using csh or tcsh:
-   > setenv PATH ${PATH}:~/src/LidarViewer-2.5/bin
+   > setenv PATH ${PATH}:~/src/LidarViewer-2.6/bin
    - or -
    > setenv PATH ${PATH}:<INSTALLDIR>/bin
    where <INSTALLDIR> is the target location set in the makefile.
    Using bash:
-   > export PATH=${PATH}:~/src/LidarViewer-2.5/bin
+   > export PATH=${PATH}:~/src/LidarViewer-2.6/bin
    - or -
    > export PATH=${PATH}:<INSTALLDIR>/bin
    These lines can also be added to the user's .cshrc or .bashrc files
@@ -122,7 +122,7 @@ directory, (see steps 4 and 6 above).
    but, if preferred, it can be started from a MacOS X terminal instead
    of xterm.
 
-2. See Vrui-1.0 documentation on Vrui's basic user interface and how to
+2. See Vrui-2.0 documentation on Vrui's basic user interface and how to
    use LiDAR Viewer.
 
 Storing Persistent Configuration Data
@@ -134,5 +134,5 @@ inside a component. To allow customization, the LiDAR Viewer components
 read many of their options from a configuration file at startup. All
 LiDAR Viewer components will search for this configuration file,
 LidarViewer.cfg, in an etc directory underneath the installation
-directory (~/src/LidarViewer-2.5/etc in the default installation,
+directory (~/src/LidarViewer-2.6/etc in the default installation,
 <INSTALLDIR>/etc otherwise).

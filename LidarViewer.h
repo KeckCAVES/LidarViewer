@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -31,10 +31,10 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLObject.h>
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
-#include <GLMotif/Slider.h>
-#include <Vrui/Tools/LocatorTool.h>
+#include <GLMotif/TextFieldSlider.h>
+#include <Vrui/LocatorTool.h>
 #include <Vrui/LocatorToolAdapter.h>
-#include <Vrui/Tools/DraggingTool.h>
+#include <Vrui/DraggingTool.h>
 #include <Vrui/Vrui.h>
 #include <Vrui/Application.h>
 
@@ -49,7 +49,6 @@ namespace GLMotif {
 class Popup;
 class PopupMenu;
 class PopupWindow;
-class TextField;
 }
 namespace Vrui {
 class InputDevice;
@@ -143,6 +142,8 @@ class LidarViewer:public Vrui::Application,public GLObject
 	friend class SelectorLocator;
 	
 	/* Elements: */
+	std::string lidarFileName; // Name of the displayed LiDAR file
+	unsigned int memCacheSize; // Memory cache size for the LiDAR data representation in MB
 	LidarOctree* octree; // The LiDAR data representation
 	Scalar renderQuality; // The current rendering quality (adapted to achieve optimal frame rate)
 	Scalar fncWeight; // Weight factor for focus+context LOD adjustment
@@ -176,25 +177,11 @@ class LidarViewer:public Vrui::Application,public GLObject
 	/* Vrui state: */
 	GLMotif::PopupMenu* mainMenu; // The program's main menu
 	GLMotif::RadioBox* mainMenuSelectorModes;
+	GLMotif::ToggleButton* showRenderDialogToggle;
+	GLMotif::ToggleButton* showInteractionDialogToggle;
 	GLMotif::PopupWindow* renderDialog; // The rendering settings dialog
-	GLMotif::TextField* renderQualityValue;
-	GLMotif::Slider* renderQualitySlider;
-	GLMotif::TextField* fncWeightValue;
-	GLMotif::Slider* fncWeightSlider;
-	GLMotif::TextField* pointSizeValue;
-	GLMotif::Slider* pointSizeSlider;
-	GLMotif::TextField* sunAzimuthValue;
-	GLMotif::Slider* sunAzimuthSlider;
-	GLMotif::TextField* sunElevationValue;
-	GLMotif::Slider* sunElevationSlider;
-	GLMotif::TextField* texturePlaneScaleValue;
-	GLMotif::Slider* texturePlaneScaleSlider;
 	GLMotif::PopupWindow* interactionDialog; // The interaction settings dialog
 	GLMotif::RadioBox* interactionDialogSelectorModes;
-	GLMotif::TextField* brushSizeValue;
-	GLMotif::Slider* brushSizeSlider;
-	GLMotif::TextField* neighborhoodSizeValue;
-	GLMotif::Slider* neighborhoodSizeSlider;
 	
 	/* Private methods: */
 	GLMotif::Popup* createSelectorModesMenu(void);
@@ -227,6 +214,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	virtual void toolDestructionCallback(Vrui::ToolManager::ToolDestructionCallbackData* cbData);
 	virtual void frame(void);
 	virtual void display(GLContextData& contextData) const;
+	void alignSurfaceFrame(Vrui::NavTransform& surfaceFrame);
 	void centerDisplayCallback(Misc::CallbackData* cbData);
 	void changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData);
 	void classifySelectionCallback(Misc::CallbackData* cbData);
@@ -234,6 +222,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void clearSelectionCallback(Misc::CallbackData* cbData);
 	void extractPlaneCallback(Misc::CallbackData* cbData);
 	void extractBruntonCallback(Misc::CallbackData* cbData);
+	void extractLineCallback(Misc::CallbackData* cbData);
 	void extractSphereCallback(Misc::CallbackData* cbData);
 	void extractCylinderCallback(Misc::CallbackData* cbData);
 	void intersectPrimitivesCallback(Misc::CallbackData* cbData);
@@ -242,20 +231,22 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void deleteSelectedPrimitivesCallback(Misc::CallbackData* cbData);
 	void clearPrimitivesCallback(Misc::CallbackData* cbData);
 	void showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
-	void renderQualitySliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
-	void fncWeightSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
-	void pointSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void renderQualitySliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void fncWeightSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void usePointColorsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void enableSunCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
-	void sunAzimuthSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
-	void sunElevationSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void sunAzimuthSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void sunElevationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
-	void texturePlaneScaleSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void renderDialogCloseCallback(Misc::CallbackData* cbData);
 	void showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
-	void brushSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
-	void neighborhoodSizeSliderCallback(GLMotif::Slider::ValueChangedCallbackData* cbData);
+	void brushSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void neighborhoodSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void interactionDialogCloseCallback(Misc::CallbackData* cbData);
 	void updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	};
 

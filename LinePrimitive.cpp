@@ -1,7 +1,7 @@
 /***********************************************************************
 LinePrimitive - Class for lines extracted from point clouds by
 intersecting two plane primitives.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -28,13 +28,128 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Comm/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
+#include <Geometry/Box.h>
+#include <Geometry/PCACalculator.h>
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
 #include <GL/GLGeometryWrappers.h>
 
+#include "LidarOctree.h"
 #include "PlanePrimitive.h"
 
 #include "LinePrimitive.h"
+
+class LidarLineExtractor
+	{
+	/* Embedded classes: */
+	public:
+	typedef Geometry::Point<double,3> Point; // Type for points
+	typedef Geometry::Vector<double,3> Vector; // Type for vectors
+	typedef Geometry::Box<double,3> Box; // Type for bounding boxes
+	
+	/* Elements: */
+	private:
+	Box bb; // Bounding box of all processed points
+	Geometry::PCACalculator<3> pca; // Helper object to accumulate the points' covariance matrix and calculate their PCA
+	
+	/* Constructors and destructors: */
+	public:
+	LidarLineExtractor(void)
+		:bb(Box::empty)
+		{
+		};
+	
+	/* Methods: */
+	void operator()(const LidarPoint& lp) // Process the given LiDAR point
+		{
+		/* Add the node point to the bounding box: */
+		bb.addPoint(lp);
+		
+		/* Add the point to the PCA calculator: */
+		pca.accumulatePoint(lp);
+		};
+	size_t getNumPoints(void) const // Returns the number of processed points
+		{
+		return pca.getNumPoints();
+		}
+	const Box& getBB(void) const // Returns the processed points' bounding box
+		{
+		return bb;
+		};
+	void calcLine(Point& centroid,Vector& axis) // Returns the least-squares line
+		{
+		/* Calculate the processed points' centroid: */
+		centroid=pca.calcCentroid();
+		
+		/* Calculate the point set's covariance matrix: */
+		pca.calcCovariance();
+		
+		/* Calculate the covariance matrix' eigenvalues: */
+		double evs[3];
+		pca.calcEigenvalues(evs);
+		
+		/* Get the "longest" eigenvector: */
+		axis=pca.calcEigenvector(evs[0]);
+		};
+	};
+
+class LidarLineFitter
+	{
+	/* Embedded classes: */
+	public:
+	typedef Geometry::Point<double,3> Point; // Type for points
+	typedef Geometry::Vector<double,3> Vector; // Type for vectors
+	
+	/* Elements: */
+	private:
+	Point centroid; // Line's centroid
+	Vector axis; // Line's normalized axis
+	double min,max; // Bounding interval of all points in line's coordinate system
+	size_t numPoints; // Number of accumulated points
+	double ms; // Accumulated RMS distance from points to line
+	
+	/* Constructors and destructors: */
+	public:
+	LidarLineFitter(const Point& sCentroid,const Vector& sAxis)
+		:centroid(sCentroid),axis(sAxis),
+		 min(Math::Constants<double>::max),
+		 max(Math::Constants<double>::min),
+		 numPoints(0),ms(0.0)
+		{
+		/* Normalize the axis vector: */
+		axis.normalize();
+		};
+	
+	/* Methods: */
+	void operator()(const LidarPoint& lp) // Process the given LiDAR point
+		{
+		/* Transform the point to line coordinates: */
+		Vector lpc=Point(lp)-centroid;
+		double x=lpc*axis;
+		
+		/* Add the point to the bounding interval: */
+		if(min>x)
+			min=x;
+		if(max<x)
+			max=x;
+		
+		/* Add the point to the RMS distance: */
+		++numPoints;
+		ms+=Geometry::sqr(lpc-axis*x);
+		};
+	double getMin(void) const
+		{
+		return min;
+		};
+	double getMax(void) const
+		{
+		return max;
+		};
+	double getRMS(void) const
+		{
+		return Math::sqrt(ms/double(numPoints));
+		};
+	};
 
 /******************************
 Methods of class LinePrimitive:
@@ -167,6 +282,8 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,C
 			{
 			/* Send the extracted primitive over the pipe: */
 			pipe->write<int>(1);
+			pipe->write<unsigned int>((unsigned int)(numPoints));
+			pipe->write<Scalar>(rms);
 			pipe->write<Scalar>(center.getComponents(),3);
 			pipe->write<Scalar>(axis.getComponents(),3);
 			pipe->write<Scalar>(length);
@@ -184,11 +301,79 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,C
 		}
 	}
 
+LinePrimitive::LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
+	{
+	/* Create a LiDAR line extractor: */
+	LidarLineExtractor lle;
+	
+	/* Process all selected points: */
+	octree->processSelectedPoints(lle);
+	
+	if(lle.getNumPoints()>=2)
+		{
+		/* Extract the line's coordinate frame: */
+		LidarLineExtractor::Point centroid;
+		LidarLineExtractor::Vector laxis;
+		lle.calcLine(centroid,laxis);
+		
+		/* Calculate the bounding interval of the selected points in line coordinates: */
+		LidarLineFitter llf(centroid,laxis);
+		octree->processSelectedPoints(llf);
+		double min=llf.getMin();
+		double max=llf.getMax();
+		double size=max-min;
+		min-=0.1*size;
+		max+=0.1*size;
+		
+		/* Store the number of points and the RMS residual: */
+		numPoints=lle.getNumPoints();
+		rms=llf.getRMS();
+		
+		/* Store the line: */
+		laxis.normalize();
+		center=Point(centroid+laxis*Math::mid(min,max));
+		axis=Vector(laxis);
+		length=Scalar(max-min);
+		
+		/* Print the line's equation: */
+		std::cout<<"Line fitting "<<numPoints<<" points"<<std::endl;
+		std::cout<<"Center point: ("<<center[0]<<", "<<center[1]<<", "<<center[2]<<")"<<std::endl;
+		std::cout<<"Axis direction: ("<<axis[0]<<", "<<axis[1]<<", "<<axis[2]<<")"<<std::endl;
+		std::cout<<"Length: "<<length<<std::endl;
+		std::cout<<"RMS approximation residual: "<<rms<<std::endl;
+		
+		if(pipe!=0)
+			{
+			/* Send the extracted primitive over the pipe: */
+			pipe->write<int>(1);
+			pipe->write<unsigned int>((unsigned int)(numPoints));
+			pipe->write<Scalar>(rms);
+			pipe->write<Scalar>(center.getComponents(),3);
+			pipe->write<Scalar>(axis.getComponents(),3);
+			pipe->write<Scalar>(length);
+			pipe->finishMessage();
+			}
+		}
+	else
+		{
+		if(pipe!=0)
+			{
+			pipe->write<int>(0);
+			pipe->finishMessage();
+			}
+		Misc::throwStdErr("LinePrimitive::LinePrimitive: Not enough selected points");
+		}
+	}
+
 LinePrimitive::LinePrimitive(Comm::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())
-		Misc::throwStdErr("LinePrimitive::LinePrimitive: Given planes do not intersect");
+		Misc::throwStdErr("LinePrimitive::LinePrimitive: Undefined line equation");
+	
+	/* Read the number of points and the RMS residual: */
+	numPoints=pipe->read<unsigned int>();
+	rms=pipe->read<Scalar>();
 	
 	/* Read the line parameters: */
 	pipe->read<Scalar>(center.getComponents(),3);
@@ -198,6 +383,10 @@ LinePrimitive::LinePrimitive(Comm::MulticastPipe* pipe)
 
 LinePrimitive::LinePrimitive(Misc::File& file,const Primitive::Vector& translation)
 	{
+	/* Read the number of points and the RMS residual: */
+	numPoints=file.read<unsigned int>();
+	rms=file.read<Scalar>();
+	
 	/* Read the line parameters: */
 	file.read<Scalar>(center.getComponents(),3);
 	center+=translation;
@@ -245,6 +434,10 @@ void LinePrimitive::glRenderAction(GLContextData& contextData) const
 
 void LinePrimitive::write(Misc::File& file,const Primitive::Vector& translation) const
 	{
+	/* Write the number of points and the RMS residual: */
+	file.write<unsigned int>((unsigned int)(numPoints));
+	file.write<Scalar>(rms);
+	
 	/* Write the line parameters: */
 	file.write<Scalar>((center+translation).getComponents(),3);
 	file.write<Scalar>(axis.getComponents(),3);
