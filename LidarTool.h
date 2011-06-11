@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarTool - Vrui tool class to position a virtual input device at the
 intersection of a ray and a LiDAR octree.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,9 +25,10 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #define LIDARTOOL_INCLUDED
 
 #include <Vrui/TransformTool.h>
+#include <Vrui/Application.h>
 
 /* Forward declarations: */
-class LidarOctree;
+class LidarViewer;
 
 class LidarTool; // Forward declaration of the LiDAR tool class
 
@@ -35,13 +36,9 @@ class LidarToolFactory:public Vrui::ToolFactory // Class for factories that crea
 	{
 	friend class LidarTool;
 	
-	/* Elements: */
-	private:
-	const LidarOctree* octree; // The LiDAR data representation shared by all LiDAR tools
-	
 	/* Constructors and destructors: */
 	public:
-	LidarToolFactory(Vrui::ToolManager& toolManager,const LidarOctree* sOctree);
+	LidarToolFactory(Vrui::ToolManager& toolManager);
 	static void factoryDestructor(Vrui::ToolFactory* factory)
 		{
 		delete factory;
@@ -54,7 +51,7 @@ class LidarToolFactory:public Vrui::ToolFactory // Class for factories that crea
 	virtual void destroyTool(Vrui::Tool* tool) const;
 	};
 
-class LidarTool:public Vrui::TransformTool // The LiDAR tool class
+class LidarTool:public Vrui::TransformTool,public Vrui::Application::Tool<LidarViewer> // The LiDAR tool class
 	{
 	friend class LidarToolFactory;
 	
@@ -70,6 +67,7 @@ class LidarTool:public Vrui::TransformTool // The LiDAR tool class
 	virtual void initialize(void);
 	virtual const Vrui::ToolFactory* getFactory(void) const;
 	virtual void frame(void);
+	virtual void display(GLContextData& contextData) const;
 	};
 
 #endif

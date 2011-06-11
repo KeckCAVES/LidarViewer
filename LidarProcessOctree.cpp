@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,6 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
+#include <Misc/File.h>
 #include <Math/Math.h>
 
 #include "LidarProcessOctree.h"
@@ -205,6 +206,60 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 	}
 	}
 
+void LidarProcessOctree::enterNodeRec(LidarProcessOctree::Node* node)
+	{
+	/* Enter all nodes from the root to the given node: */
+	while(node!=0)
+		{
+		node->enter();
+		node=node->parent;
+		}
+	}
+
+void LidarProcessOctree::leaveNodeRec(LidarProcessOctree::Node* node)
+	{
+	/* Leave all nodes from the root to the given node: */
+	while(node!=0)
+		{
+		node->leave();
+		node=node->parent;
+		}
+	}
+
+LidarProcessOctree::Node* LidarProcessOctree::nextNodePrefix(LidarProcessOctree::Node* node)
+	{
+	/* Check if the node is an interior node: */
+	if(node->childrenOffset!=0)
+		{
+		/* Subdivide the node if necessary: */
+		if(node->children==0)
+			subdivide(*node);
+		
+		/* Go to the node's first child: */
+		return &node->children[0];
+		}
+	else
+		{
+		while(node->parent!=0)
+			{
+			/* Find the node's index among its parent's children: */
+			int childIndex;
+			for(childIndex=0;childIndex<8&&node!=&node->parent->children[childIndex];++childIndex)
+				;
+			
+			/* Return the node's next sibling if there is one: */
+			if(childIndex+1<8)
+				return &node->parent->children[childIndex+1];
+			
+			/* Try the node's parent: */
+			node=node->parent;
+			}
+		
+		/* The root doesn't have siblings; we're done here: */
+		return 0;
+		}
+	}
+
 namespace {
 
 /***********************************************************
@@ -224,6 +279,7 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSize)
 	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
 	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
+	 offset(OffsetVector::zero),
 	 numSubdivideCalls(0),numLoadedNodes(0),
 	 lruHead(0),lruTail(0)
 	{
@@ -269,6 +325,22 @@ LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSi
 		}
 	
 	++numLoadedNodes;
+	
+	/* Try loading an offset file: */
+	try
+		{
+		Misc::File offsetFile(getLidarPartFileName(lidarFileName,"Offset").c_str(),"rb",Misc::File::LittleEndian);
+		
+		/* Read the original offset vector: */
+		offsetFile.read<OffsetVector::Scalar>(offset.getComponents(),3);
+		
+		/* Invert the offset transformation: */
+		offset=-offset;
+		}
+	catch(Misc::File::OpenError err)
+		{
+		/* Ignore the error */
+		}
 	
 	/* Initialize the node cache: */
 	numCachedNodes=1U;

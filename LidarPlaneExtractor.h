@@ -74,7 +74,7 @@ class LidarPlaneExtractor
 		/* Calculate the covariance matrix' eigenvalues: */
 		pca.calcEigenvalues(lengths);
 		
-		/* Calculate all eigenvalues: */
+		/* Calculate all eigenvectors: */
 		for(int i=0;i<3;++i)
 			plane[i]=pca.calcEigenvector(lengths[i]);
 		

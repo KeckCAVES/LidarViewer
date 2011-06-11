@@ -28,7 +28,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLColor.h>
 
 /* Forward declarations: */
-namespace Misc {
+namespace IO {
 class File;
 }
 namespace Geometry {
@@ -84,7 +84,7 @@ class Primitive
 		};
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const =0; // Returns the distance from the pick point to the primitive, or the maximum pick distance, whichever is smaller
 	virtual void glRenderAction(GLContextData& contextData) const =0; // Draws the primitive
-	virtual void write(Misc::File& file,const Vector& translation) const =0; // Writes a primitive to a binary file
+	virtual void write(IO::File& file,const Vector& translation) const =0; // Writes a primitive to a binary file
 	};
 
 #endif

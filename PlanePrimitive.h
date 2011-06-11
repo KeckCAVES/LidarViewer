@@ -64,13 +64,13 @@ class PlanePrimitive:public Primitive,public GLObject
 	public:
 	PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates plane by processing selected points from the given octree; writes result to given pipe if !=0
 	PlanePrimitive(Comm::MulticastPipe* pipe); // Creates plane by reading plane data from given pipe
-	PlanePrimitive(Misc::File& file,const Vector& translation); // Reads a plane primitive from a binary file
+	PlanePrimitive(IO::File& file,const Vector& translation); // Reads a plane primitive from a binary file
 	
 	/* Methods: */
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const;
 	virtual void initContext(GLContextData& contextData) const;
 	virtual void glRenderAction(GLContextData& contextData) const;
-	virtual void write(Misc::File& file,const Vector& translation) const;
+	virtual void write(IO::File& file,const Vector& translation) const;
 	const Plane& getPlane(void) const // Returns the equation of the extracted plane
 		{
 		return plane;

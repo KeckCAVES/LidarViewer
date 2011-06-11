@@ -95,3 +95,8 @@ LiDAR Viewer 2.6:
 - Now printing strike and dip angle to console when creating a strike+
   dip indicator primitive.
 - Bumped Vrui version requirement to 2.0-pre.
+
+LiDAR Viewer 2.7:
+- Some minor improvements and bug fixes.
+- Bumped Vrui version requirement to 2.1-001.
+- Changed build system to simplify creating binary packages.

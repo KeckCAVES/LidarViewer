@@ -31,30 +31,29 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/PopupWindow.h>
 #include <GLMotif/RowColumn.h>
 #include <GLMotif/Label.h>
-#include <Vrui/DisplayState.h>
 #include <Vrui/Vrui.h>
+#include <Vrui/DisplayState.h>
 
 #include "LidarOctree.h"
 #include "ProfileExtractor.h"
+#include "LidarViewer.h"
 
 /***********************************
 Methods of class ProfileToolFactory:
 ***********************************/
 
-ProfileToolFactory::ProfileToolFactory(Vrui::ToolManager& toolManager,const LidarOctree* sOctree)
-	:Vrui::ToolFactory("ProfileTool",toolManager),
-	 octree(sOctree)
+ProfileToolFactory::ProfileToolFactory(Vrui::ToolManager& toolManager)
+	:Vrui::ToolFactory("ProfileTool",toolManager)
 	{
 	#if 0
 	/* Insert class into class hierarchy: */
-	Vrui::TransformToolFactory* transformToolFactory=dynamic_cast<Vrui::TransformToolFactory*>(toolManager.loadClass("TransformTool"));
-	transformToolFactory->addChildClass(this);
-	addParentClass(transformToolFactory);
+	Vrui::ToolFactory* toolFactory=dynamic_cast<Vrui::ToolFactory*>(toolManager.loadClass("Tool"));
+	toolFactory->addChildClass(this);
+	addParentClass(toolFactory);
 	#endif
 	
 	/* Initialize tool layout: */
-	layout.setNumDevices(1);
-	layout.setNumButtons(0,1);
+	layout.setNumButtons(1);
 	
 	/* Set the custom tool class' factory pointer: */
 	ProfileTool::factory=this;
@@ -69,6 +68,11 @@ ProfileToolFactory::~ProfileToolFactory(void)
 const char* ProfileToolFactory::getName(void) const
 	{
 	return "Profile Extractor";
+	}
+
+const char* ProfileToolFactory::getButtonFunction(int buttonSlotIndex) const
+	{
+	return "Draw Profile";
 	}
 
 Vrui::Tool* ProfileToolFactory::createTool(const Vrui::ToolInputAssignment& inputAssignment) const
@@ -185,7 +189,7 @@ const Vrui::ToolFactory* ProfileTool::getFactory(void) const
 	return factory;
 	}
 
-void ProfileTool::buttonCallback(int deviceIndex,int deviceButtonIndex,Vrui::InputDevice::ButtonCallbackData* cbData)
+void ProfileTool::buttonCallback(int,Vrui::InputDevice::ButtonCallbackData* cbData)
 	{
 	/* Change state depending on the button event: */
 	switch(state)
@@ -215,7 +219,7 @@ void ProfileTool::buttonCallback(int deviceIndex,int deviceButtonIndex,Vrui::Inp
 void ProfileTool::frame(void)
 	{
 	/* Get pointer to input device: */
-	Vrui::InputDevice* iDevice=input.getDevice(0);
+	Vrui::InputDevice* iDevice=getButtonDevice(0);
 	
 	/* Act depending on current state: */
 	switch(state)
@@ -232,7 +236,7 @@ void ProfileTool::frame(void)
 		
 		case 4:
 			/* Extract the profile: */
-			extractProfile(factory->octree,p0,p1,segmentLength,oversampling,filterWidth,numLobes,Vrui::getMainPipe());
+			extractProfile(application->octrees[0],p0,p1,segmentLength,oversampling,filterWidth,numLobes,Vrui::getMainPipe());
 			
 			/* Go back to idle state: */
 			state=0;

@@ -52,12 +52,12 @@ class LinePrimitive:public Primitive
 	LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,Comm::MulticastPipe* pipe); // Creates line primitive by intersecting the two given plane primitives; writes result to given pipe if !=0
 	LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates line by processing selected points from the given octree; writes result to given pipe if !=0
 	LinePrimitive(Comm::MulticastPipe* pipe); // Creates line by reading line data from given pipe
-	LinePrimitive(Misc::File& file,const Vector& translation); // Reads a line primitive from a binary file
+	LinePrimitive(IO::File& file,const Vector& translation); // Reads a line primitive from a binary file
 	
 	/* Methods: */
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const;
 	virtual void glRenderAction(GLContextData& contextData) const;
-	virtual void write(Misc::File& file,const Vector& translation) const;
+	virtual void write(IO::File& file,const Vector& translation) const;
 	const Point& getCenter(void) const // Returns the line's center point
 		{
 		return center;

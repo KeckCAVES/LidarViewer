@@ -35,6 +35,7 @@ int main(int argc,char* argv[])
 	const char* fileName=0;
 	Scalar radius=Scalar(0);
 	int cacheSize=512;
+	const char* outlierFileName=0;
 	unsigned int numThreads=1;
 	for(int i=1;i<argc;++i)
 		{
@@ -55,6 +56,11 @@ int main(int argc,char* argv[])
 				++i;
 				numThreads=atoi(argv[i]);
 				}
+			else if(strcasecmp(argv[i]+1,"saveOutliers")==0)
+				{
+				++i;
+				outlierFileName=argv[i];
+				}
 			}
 		else if(fileName==0)
 			fileName=argv[i];
@@ -68,11 +74,17 @@ int main(int argc,char* argv[])
 	/* Create a processing octree: */
 	LidarProcessOctree lpo(fileName,size_t(cacheSize)*size_t(1024*1024));
 	
-	/* Calculate normal vectors for all points in the octree: */
+	/* Create a normal vector calculation functor: */
 	std::string normalFileName=fileName;
 	normalFileName.push_back('/');
 	normalFileName.append("Normals");
 	NodeNormalCalculator nodeNormalCalculator(lpo,radius,normalFileName.c_str(),numThreads);
+	
+	/* Enable saving of outliers if requested: */
+	if(outlierFileName!=0)
+		nodeNormalCalculator.saveOutlierPoints(outlierFileName);
+	
+	/* Calculate normal vectors for all points in the octree: */
 	std::cout<<"Calculating normal vectors...   0%"<<std::flush;
 	lpo.processNodesPostfix(nodeNormalCalculator);
 	std::cout<<std::endl;

@@ -24,7 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <iostream>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
+#include <IO/File.h>
 #include <Comm/MulticastPipe.h>
 #include <Math/Math.h>
 #include <GL/gl.h>
@@ -174,7 +174,7 @@ CylinderPrimitive::CylinderPrimitive(Comm::MulticastPipe* pipe)
 	numY=pipe->read<int>();
 	}
 
-CylinderPrimitive::CylinderPrimitive(Misc::File& file,const Primitive::Vector& translation)
+CylinderPrimitive::CylinderPrimitive(IO::File& file,const Primitive::Vector& translation)
 	{
 	/* Read the number of points and the RMS residual: */
 	numPoints=file.read<unsigned int>();
@@ -311,7 +311,7 @@ void CylinderPrimitive::glRenderAction(GLContextData& contextData) const
 	glPopAttrib();
 	}
 
-void CylinderPrimitive::write(Misc::File& file,const Primitive::Vector& translation) const
+void CylinderPrimitive::write(IO::File& file,const Primitive::Vector& translation) const
 	{
 	/* Write the number of points and the RMS residual: */
 	file.write<unsigned int>((unsigned int)(numPoints));

@@ -26,6 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <GLMotif/TextFieldSlider.h>
 #include <Vrui/Tool.h>
+#include <Vrui/Application.h>
 
 #include "LidarTypes.h"
 
@@ -33,7 +34,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 namespace GLMotif {
 class PopupWindow;
 }
-class LidarOctree;
+class LidarViewer;
 
 class ProfileTool; // Forward declaration of the profile tool class
 
@@ -41,13 +42,9 @@ class ProfileToolFactory:public Vrui::ToolFactory // Class for factories that cr
 	{
 	friend class ProfileTool;
 	
-	/* Elements: */
-	private:
-	const LidarOctree* octree; // The LiDAR data representation shared by all LiDAR tools
-	
 	/* Constructors and destructors: */
 	public:
-	ProfileToolFactory(Vrui::ToolManager& toolManager,const LidarOctree* sOctree);
+	ProfileToolFactory(Vrui::ToolManager& toolManager);
 	static void factoryDestructor(Vrui::ToolFactory* factory)
 		{
 		delete factory;
@@ -56,11 +53,12 @@ class ProfileToolFactory:public Vrui::ToolFactory // Class for factories that cr
 	
 	/* Methods from ToolFactory: */
 	virtual const char* getName(void) const;
+	virtual const char* getButtonFunction(int buttonSlotIndex) const;
 	virtual Vrui::Tool* createTool(const Vrui::ToolInputAssignment& inputAssignment) const;
 	virtual void destroyTool(Vrui::Tool* tool) const;
 	};
 
-class ProfileTool:public Vrui::Tool // The profile tool class
+class ProfileTool:public Vrui::Tool,public Vrui::Application::Tool<LidarViewer> // The profile tool class
 	{
 	friend class ProfileToolFactory;
 	
@@ -88,9 +86,9 @@ class ProfileTool:public Vrui::Tool // The profile tool class
 	
 	/* Methods from Tool: */
 	virtual const Vrui::ToolFactory* getFactory(void) const;
-	virtual void buttonCallback(int deviceIndex,int deviceButtonIndex,Vrui::InputDevice::ButtonCallbackData* cbData); // Method called when state of a button changes
+	virtual void buttonCallback(int buttonSlotIndex,Vrui::InputDevice::ButtonCallbackData* cbData);
 	virtual void frame(void);
-	virtual void display(GLContextData& contextData) const; // Method for rendering the tool's current state into the current OpenGL context
+	virtual void display(GLContextData& contextData) const;
 	};
 
 #endif

@@ -29,11 +29,12 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdexcept>
 #include <Misc/FunctionCalls.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
-#include <Misc/FileCharacterSource.h>
-#include <Misc/ValueSource.h>
+#include <Misc/CreateNumberedFileName.h>
+#include <Misc/FileTests.h>
 #include <Misc/StandardValueCoders.h>
 #include <Misc/ConfigurationFile.h>
+#include <IO/File.h>
+#include <IO/ValueSource.h>
 #include <Comm/MulticastPipe.h>
 #include <Geometry/Vector.h>
 #include <Geometry/TranslationTransformation.h>
@@ -50,6 +51,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLColorMap.h>
 #include <GL/GLFrustum.h>
 #include <GLMotif/StyleSheet.h>
+#include <GLMotif/WidgetManager.h>
 #include <GLMotif/Margin.h>
 #include <GLMotif/Separator.h>
 #include <GLMotif/Button.h>
@@ -61,7 +63,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/Popup.h>
 #include <GLMotif/PopupMenu.h>
 #include <GLMotif/PopupWindow.h>
-#include <GLMotif/WidgetManager.h>
 #include <Vrui/GlyphRenderer.h>
 #include <Vrui/OrthogonalCoordinateTransform.h>
 #include <Vrui/Lightsource.h>
@@ -71,6 +72,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Vrui/ToolManager.h>
 #include <Vrui/ClusterSupport.h>
 #include <Vrui/SurfaceNavigationTool.h>
+#include <Vrui/OpenFile.h>
 
 #include "LidarOctree.h"
 #include "LidarTool.h"
@@ -87,6 +89,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "ProfileTool.h"
 #include "SceneGraph.h"
 #include "LoadPointSet.h"
+#include "FallingSphereProcessor.h"
 
 /*********************************************
 Methods of class LidarViewer::SelectorLocator:
@@ -118,11 +121,13 @@ void LidarViewer::SelectorLocator::motionCallback(Vrui::LocatorTool::MotionCallb
 		switch(selectorMode)
 			{
 			case ADD:
-				application->octree->selectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
+				for(int i=0;i<application->numOctrees;++i)
+					application->octrees[i]->selectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
 				break;
 			
 			case SUBTRACT:
-				application->octree->deselectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
+				for(int i=0;i<application->numOctrees;++i)
+					application->octrees[i]->deselectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
 				break;
 			}
 		}
@@ -382,7 +387,11 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	
 	renderQualityBox->manageChild();
 	
-	if(octree->hasNormalVectors())
+	/* Check if any of the octrees have normal vectors: */
+	bool haveNormalVectors=false;
+	for(int i=0;i<numOctrees;++i)
+		haveNormalVectors=haveNormalVectors||octrees[i]->hasNormalVectors();
+	if(haveNormalVectors)
 		{
 		new GLMotif::Separator("Separator1",renderSettings,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
 		
@@ -696,7 +705,7 @@ void LidarViewer::setEnableSun(bool newEnableSun)
 
 LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	:Vrui::Application(argc,argv,appDefaults),
-	 octree(0),
+	 numOctrees(0),octrees(0),
 	 renderQuality(0),fncWeight(0.5),
 	 pointSize(3.0f),
 	 pointBasedLighting(false),usePointColors(true),
@@ -746,7 +755,6 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		}
 	
 	/* Parse the command line: */
-	bool haveOctreeFile=false;
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -796,52 +804,72 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 			else if(strcasecmp(argv[i]+1,"usePointColors")==0)
 				usePointColors=true;
 			}
-		else if(!haveOctreeFile)
-			{
-			/* Load a LiDAR octree file: */
-			lidarFileName=argv[i];
-			octree=new LidarOctree(argv[i],size_t(memCacheSize)*size_t(1024*1024),size_t(gfxCacheSize)*size_t(1024*1024));
-			
-			haveOctreeFile=true;
-			}
 		else
-			std::cerr<<"LidarViewer::LidarViewer: Ignoring command line argument "<<argv[i]<<std::endl;
+			{
+			/* Load another LiDAR octree file: */
+			lidarFileNames.push_back(argv[i]);
+			LidarOctree** newOctrees=new LidarOctree*[numOctrees+1];
+			for(int j=0;j<numOctrees;++j)
+				newOctrees[j]=octrees[j];
+			delete[] octrees;
+			++numOctrees;
+			octrees=newOctrees;
+			
+			/* Load a LiDAR octree file: */
+			octrees[numOctrees-1]=new LidarOctree(argv[i],size_t(memCacheSize)*size_t(1024*1024),size_t(gfxCacheSize)*size_t(1024*1024));
+			}
 		}
 	
-	if(!haveOctreeFile)
+	if(numOctrees==0)
 		Misc::throwStdErr("LidarViewer::LidarViewer: No octree file name provided");
 	
-	/* Initialize the octree: */
-	octree->setRenderQuality(renderQuality);
-	octree->setTreeUpdateFunction(treeUpdateNotificationCB,0);
+	/* Initialize all octrees: */
+	for(int i=0;i<numOctrees;++i)
+		{
+		octrees[i]->setRenderQuality(renderQuality);
+		octrees[i]->setTreeUpdateFunction(treeUpdateNotificationCB,0);
+		}
 	
-	try
+	/* Check if all the octrees have the same linear unit: */
+	Geometry::LinearUnit linearUnit;
+	for(int i=0;i<numOctrees;++i)
 		{
-		/* Check if the octree file contains a unit file: */
-		Misc::FileCharacterSource unitFile((lidarFileName+"/Unit").c_str());
-		Misc::ValueSource unit(unitFile);
-		unit.skipWs();
-		Vrui::Scalar unitFactor=Vrui::Scalar(unit.readNumber());
-		std::string unitName=unit.readString();
-		Vrui::getCoordinateManager()->setUnit(Geometry::LinearUnit(unitName.c_str(),unitFactor));
+		/* Check if the LiDAR file contains a unit file: */
+		std::string unitFileName=lidarFileNames[i];
+		unitFileName.append("/Unit");
+		if(Misc::isFileReadable(unitFileName.c_str()))
+			{
+			/* Read the unit file: */
+			IO::AutoFile unitFile(Vrui::openFile(unitFileName.c_str()));
+			IO::ValueSource unit(*unitFile);
+			unit.skipWs();
+			Vrui::Scalar unitFactor=Vrui::Scalar(unit.readNumber());
+			std::string unitName=unit.readString();
+			
+			/* Create a linear unit: */
+			Geometry::LinearUnit fileLinearUnit(unitName.c_str(),unitFactor);
+			if(linearUnit.unit==Geometry::LinearUnit::UNKNOWN)
+				linearUnit=fileLinearUnit;
+			else if(linearUnit.unit!=fileLinearUnit.unit||linearUnit.factor!=fileLinearUnit.factor)
+				Misc::throwStdErr("LidarViewer::LidarViewer: Octree file %s has mismatching units",lidarFileNames[i].c_str());
+			}
 		}
-	catch(std::runtime_error)
-		{
-		/* Ignore the error and carry on... */
-		}
+	
+	/* Set the coordinate manager's linear unit: */
+	Vrui::getCoordinateManager()->setUnit(linearUnit);
 	
 	/* Register a coordinate transform object to undo the coordinate offset done by the octree object and LiDAR preprocessor: */
-	Vrui::Vector offset=octree->getPointOffset();
-	try
+	/* WARNING: This does not work properly for multiple octree files! */
+	Vrui::Vector offset=octrees[0]->getPointOffset();
+	std::string offsetFileName=lidarFileNames[0];
+	offsetFileName.append("/Offset");
+	if(Misc::isFileReadable(offsetFileName.c_str()))
 		{
-		/* Check if the octree file contains an offset file: */
-		Misc::File offsetFile((lidarFileName+"/Offset").c_str(),"rb",Misc::File::LittleEndian);
+		/* Read the offset file: */
+		IO::AutoFile offsetFile(Vrui::openFile(offsetFileName.c_str()));
+		offsetFile->setEndianness(IO::File::LittleEndian);
 		for(int i=0;i<3;++i)
-			offset[i]-=offsetFile.read<double>();
-		}
-	catch(std::runtime_error)
-		{
-		/* Ignore the error and carry on... */
+			offset[i]-=offsetFile->read<double>();
 		}
 	Vrui::getCoordinateManager()->setCoordinateTransform(new Vrui::OrthogonalCoordinateTransform(Vrui::OGTransform::translate(-offset)));
 	
@@ -862,9 +890,9 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	centerDisplayCallback(0);
 	
 	/* Register the custom tool classes with the Vrui tool manager: */
-	LidarToolFactory* lidarToolFactory=new LidarToolFactory(*Vrui::getToolManager(),octree);
+	LidarToolFactory* lidarToolFactory=new LidarToolFactory(*Vrui::getToolManager());
 	Vrui::getToolManager()->addClass(lidarToolFactory,LidarToolFactory::factoryDestructor);
-	ProfileToolFactory* profileToolFactory=new ProfileToolFactory(*Vrui::getToolManager(),octree);
+	ProfileToolFactory* profileToolFactory=new ProfileToolFactory(*Vrui::getToolManager());
 	Vrui::getToolManager()->addClass(profileToolFactory,ProfileToolFactory::factoryDestructor);
 	
 	/* Initialize the scene graph: */
@@ -895,8 +923,10 @@ LidarViewer::~LidarViewer(void)
 	/* Delete the viewer headlight states: */
 	delete[] viewerHeadlightStates;
 	
-	/* Delete the octree: */
-	delete octree;
+	/* Delete all octrees: */
+	for(int i=0;i<numOctrees;++i)
+		delete octrees[i];
+	delete[] octrees;
 	}
 
 void LidarViewer::initContext(GLContextData& contextData) const
@@ -939,6 +969,9 @@ void LidarViewer::initContext(GLContextData& contextData) const
 
 void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackData* cbData)
 	{
+	/* Let the base class at it first: */
+	Vrui::Application::toolCreationCallback(cbData);
+	
 	/* Check if the new tool is a locator tool: */
 	Vrui::LocatorTool* ltool=dynamic_cast<Vrui::LocatorTool*>(cbData->tool);
 	if(ltool!=0)
@@ -963,7 +996,7 @@ void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackDa
 	if(surfaceNavigationTool!=0)
 		{
 		/* Set the new tool's alignment function: */
-		surfaceNavigationTool->setAlignFunction(Misc::createFunctionCall<Vrui::NavTransform&,LidarViewer>(this,&LidarViewer::alignSurfaceFrame));
+		surfaceNavigationTool->setAlignFunction(Misc::createFunctionCall<const Vrui::SurfaceNavigationTool::AlignmentData&,LidarViewer>(this,&LidarViewer::alignSurfaceFrame));
 		}
 	}
 
@@ -1010,14 +1043,18 @@ void LidarViewer::frame(void)
 	#endif
 	
 	/* Prepare the next rendering pass: */
-	octree->startRenderPass();
+	for(int i=0;i<numOctrees;++i)
+		octrees[i]->startRenderPass();
 	
 	/* Prepare for interaction with all interactors: */
 	for(LocatorList::iterator lIt=locators.begin();lIt!=locators.end();++lIt)
 		{
 		SelectorLocator* sl=dynamic_cast<SelectorLocator*>(*lIt);
 		if(sl!=0&&sl->ready)
-			octree->interact(LidarOctree::Interactor(sl->modelCenter,sl->modelRadius));
+			{
+			for(int i=0;i<numOctrees;++i)
+				octrees[i]->interact(LidarOctree::Interactor(sl->modelCenter,sl->modelRadius));
+			}
 		}
 	}
 
@@ -1028,7 +1065,7 @@ void LidarViewer::display(GLContextData& contextData) const
 	
 	/* Set up basic OpenGL state: */
 	glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_LINE_BIT|GL_POINT_BIT|GL_TEXTURE_BIT);
-	if(pointBasedLighting&&octree->hasNormalVectors())
+	if(pointBasedLighting&&octrees[0]->hasNormalVectors())
 		{
 		if(usePointColors)
 			{
@@ -1068,10 +1105,12 @@ void LidarViewer::display(GLContextData& contextData) const
 	/* Render the LiDAR point tree: */
 	Point displayCenter=Point(Vrui::getInverseNavigationTransformation().transform(Vrui::getDisplayCenter()));
 	Scalar displaySize=Scalar(Vrui::getInverseNavigationTransformation().getScaling()*Vrui::getDisplaySize());
-	octree->setFocusAndContext(displayCenter,displaySize*Scalar(0.5),fncWeight);
+	for(int i=0;i<numOctrees;++i)
+		octrees[i]->setFocusAndContext(displayCenter,displaySize*Scalar(0.5),fncWeight);
 	LidarOctree::Frustum frustum;
 	frustum.setFromGL();
-	octree->glRenderAction(frustum,contextData);
+	for(int i=0;i<numOctrees;++i)
+		octrees[i]->glRenderAction(frustum,contextData);
 	
 	if(useTexturePlane)
 		{
@@ -1084,7 +1123,7 @@ void LidarViewer::display(GLContextData& contextData) const
 		}
 	
 	/* Reset OpenGL state: */
-	if(pointBasedLighting&&octree->hasNormalVectors())
+	if(pointBasedLighting&&octrees[0]->hasNormalVectors())
 		{
 		/* Disable the point-based lighting shader: */
 		dataItem->pbls.disable();
@@ -1103,40 +1142,47 @@ void LidarViewer::display(GLContextData& contextData) const
 		(*pIt)->glRenderAction(contextData);
 	}
 
-void LidarViewer::alignSurfaceFrame(Vrui::NavTransform& surfaceFrame)
+void LidarViewer::alignSurfaceFrame(const Vrui::SurfaceNavigationTool::AlignmentData& alignmentData)
 	{
 	/* Get the frame's base point: */
-	Vrui::Point base=surfaceFrame.getOrigin();
+	Vrui::Point base=alignmentData.surfaceFrame.getOrigin();
 	
-	/* Intersect a vertical ray with the LiDAR data set: */
-	LidarOctree::Ray modelRay(base+Vrui::Vector(0,0,1000),Vector(0,0,-1));
-	Scalar lambda;
+	Scalar surfaceZ=base[2];
 	if(Vrui::isMaster())
 		{
-		/* Calculate the ray's intersection parameter: */
-		lambda=octree->intersectRay(modelRay,Scalar(0.002));
+		/* Drop a sphere onto the LiDAR point cloud: */
+		base[2]+=alignmentData.probeSize+alignmentData.maxClimb;
+		FallingSphereProcessor fsp(base,alignmentData.probeSize);
+		for(int i=0;i<numOctrees;++i)
+			octrees[i]->processPointsInBox(fsp.getBox(),fsp);
+		
+		/* Get the surface elevation: */
+		if(fsp.getMinZ()!=Math::Constants<Scalar>::min)
+			surfaceZ=fsp.getMinZ()-alignmentData.probeSize;
+		
 		if(Vrui::getMainPipe()!=0)
 			{
-			/* Send the intersection parameter to the slaves: */
-			Vrui::getMainPipe()->write<Scalar>(lambda);
-			// Vrui::getMainPipe()->finishMessage();
+			/* Send the surface elevation to the slaves: */
+			Vrui::getMainPipe()->write<Scalar>(surfaceZ);
 			}
 		}
 	else
-		Vrui::getMainPipe()->read<Scalar>(lambda);
+		{
+		/* Read the surface elevation from the master: */
+		Vrui::getMainPipe()->read<Scalar>(surfaceZ);
+		}
 	
 	/* Move the frame's base point: */
-	if(lambda>=Scalar(0))
-		base=modelRay(lambda);
+	base[2]=surfaceZ;
 	
 	/* Align the frame with the terrain's x and y directions: */
-	surfaceFrame=Vrui::NavTransform(base-Vrui::Point::origin,Vrui::Rotation::identity,surfaceFrame.getScaling());
+	alignmentData.surfaceFrame=Vrui::NavTransform(base-Vrui::Point::origin,Vrui::Rotation::identity,alignmentData.surfaceFrame.getScaling());
 	}
 
 void LidarViewer::centerDisplayCallback(Misc::CallbackData* cbData)
 	{
 	/* Initialize the navigation transformation: */
-	Vrui::setNavigationTransformation(octree->getDomainCenter(),octree->getDomainRadius(),Vrui::Vector(0,0,1));
+	Vrui::setNavigationTransformation(octrees[0]->getDomainCenter(),octrees[0]->getDomainRadius(),Vrui::Vector(0,0,1));
 	}
 
 void LidarViewer::changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData)
@@ -1176,12 +1222,15 @@ void LidarViewer::changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCall
 
 void LidarViewer::classifySelectionCallback(Misc::CallbackData* cbData)
 	{
-	/* Create a point classification functor: */
-	// PointClassifier pc(octree,neighborhoodSize);
-	RidgeFinder pc(octree,neighborhoodSize);
-	
-	/* Classify all selected points: */
-	octree->colorSelectedPoints(pc);
+	for(int i=0;i<numOctrees;++i)
+		{
+		/* Create a point classification functor: */
+		// PointClassifier pc(octrees[i],neighborhoodSize);
+		RidgeFinder pc(octrees[i],neighborhoodSize);
+		
+		/* Classify all selected points: */
+		octrees[i]->colorSelectedPoints(pc);
+		}
 	}
 
 void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
@@ -1189,17 +1238,18 @@ void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
 	if(Vrui::isMaster())
 		{
 		/* Create a selection saver functor: */
-		LidarSelectionSaver lss("SelectedPoints.xyzuvwrgb",octree->getPointOffset());
+		LidarSelectionSaver lss("SelectedPoints.xyzuvwrgb",octrees[0]->getPointOffset());
 		
 		/* Save all selected points: */
-		octree->processSelectedPointsWithNormals(lss);
+		octrees[0]->processSelectedPointsWithNormals(lss);
 		}
 	}
 
 void LidarViewer::clearSelectionCallback(Misc::CallbackData* cbData)
 	{
 	/* Clear the point selection: */
-	octree->clearSelection();
+	for(int i=0;i<numOctrees;++i)
+		octrees[i]->clearSelection();
 	}
 
 void LidarViewer::extractPlaneCallback(Misc::CallbackData* cbData)
@@ -1208,7 +1258,7 @@ void LidarViewer::extractPlaneCallback(Misc::CallbackData* cbData)
 		{
 		PlanePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new PlanePrimitive(octree,extractorPipe);
+			primitive=new PlanePrimitive(octrees[0],extractorPipe);
 		else
 			primitive=new PlanePrimitive(extractorPipe);
 		
@@ -1232,7 +1282,7 @@ void LidarViewer::extractBruntonCallback(Misc::CallbackData* cbData)
 		{
 		BruntonPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new BruntonPrimitive(octree,extractorPipe);
+			primitive=new BruntonPrimitive(octrees[0],extractorPipe);
 		else
 			primitive=new BruntonPrimitive(extractorPipe);
 		
@@ -1256,7 +1306,7 @@ void LidarViewer::extractLineCallback(Misc::CallbackData* cbData)
 		{
 		LinePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new LinePrimitive(octree,extractorPipe);
+			primitive=new LinePrimitive(octrees[0],extractorPipe);
 		else
 			primitive=new LinePrimitive(extractorPipe);
 		
@@ -1276,7 +1326,7 @@ void LidarViewer::extractSphereCallback(Misc::CallbackData* cbData)
 		{
 		SpherePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new SpherePrimitive(octree,extractorPipe);
+			primitive=new SpherePrimitive(octrees[0],extractorPipe);
 		else
 			primitive=new SpherePrimitive(extractorPipe);
 		
@@ -1296,7 +1346,7 @@ void LidarViewer::extractCylinderCallback(Misc::CallbackData* cbData)
 		{
 		CylinderPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new CylinderPrimitive(octree,extractorPipe);
+			primitive=new CylinderPrimitive(octrees[0],extractorPipe);
 		else
 			primitive=new CylinderPrimitive(extractorPipe);
 		
@@ -1374,90 +1424,108 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 
 void LidarViewer::loadPrimitivesCallback(Misc::CallbackData* cbData)
 	{
-	/* Open the primitive file: */
-	Misc::File primitiveFile("Primitives.dat","rb",Misc::File::LittleEndian);
+	/* Create a file selection dialog to select a primitive file: */
+	GLMotif::FileSelectionDialog* loadPrimitivesDialog=new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",0,".dat",Vrui::openPipe());
+	loadPrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::loadPrimitivesOKCallback);
+	loadPrimitivesDialog->getCancelCallbacks().add(loadPrimitivesDialog,&GLMotif::FileSelectionDialog::defaultCloseCallback);
 	
-	/* Read the file header: */
-	char header[40];
-	primitiveFile.read<char>(header,sizeof(header));
-	if(strcmp(header,"LidarViewer primitive file v1.2       \n")!=0)
-		Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: File %s is not a valid version 1.2 primitive file","Primitives.dat");
-	
-	/* Read all primitives in the file: */
-	while(true)
+	/* Show the file selection dialog: */
+	Vrui::popupPrimaryWidget(loadPrimitivesDialog);
+	}
+ 
+void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData)
+	{
+	try
 		{
-		/* Read the primitive type: */
-		int primitiveType;
-		try
-			{
-			primitiveType=primitiveFile.read<int>();
-			}
-		catch(Misc::File::ReadError err)
-			{
-			/* Stop reading: */
-			break;
-			}
+		/* Open the primitive file: */
+		IO::AutoFile primitiveFile(Vrui::openFile(cbData->selectedFileName.c_str()));
+		primitiveFile->setEndianness(IO::File::LittleEndian);
 		
-		/* Create a primitive of the appropriate type: */
-		Primitive* newPrimitive=0;
-		switch(primitiveType)
-			{
-			case 0:
-				newPrimitive=new PlanePrimitive(primitiveFile,Primitive::Vector(-octree->getPointOffset()));
-				break;
-			
-			case 1:
-				newPrimitive=new SpherePrimitive(primitiveFile,Primitive::Vector(-octree->getPointOffset()));
-				break;
-			
-			case 2:
-				newPrimitive=new CylinderPrimitive(primitiveFile,Primitive::Vector(-octree->getPointOffset()));
-				break;
-			
-			case 3:
-				newPrimitive=new LinePrimitive(primitiveFile,Primitive::Vector(-octree->getPointOffset()));
-				break;
-			
-			case 4:
-				newPrimitive=new PointPrimitive(primitiveFile,Primitive::Vector(-octree->getPointOffset()));
-				break;
-			
-			default:
-				Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: Unknown primitive type %d",primitiveType);
-			}
+		/* Read the file header: */
+		char header[40];
+		primitiveFile->read<char>(header,sizeof(header));
+		if(strcmp(header,"LidarViewer primitive file v1.2       \n")!=0)
+			Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: File %s is not a valid version 1.2 primitive file","Primitives.dat");
 		
-		/* Store the primitive: */
-		lastPickedPrimitive=addPrimitive(newPrimitive);
+		/* Read all primitives in the file: */
+		while(!primitiveFile->eof())
+			{
+			/* Read the primitive type: */
+			int primitiveType=primitiveFile->read<int>();
+			
+			/* Create a primitive of the appropriate type: */
+			Primitive* newPrimitive=0;
+			switch(primitiveType)
+				{
+				case 0:
+					newPrimitive=new PlanePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					break;
+				
+				case 1:
+					newPrimitive=new SpherePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					break;
+				
+				case 2:
+					newPrimitive=new CylinderPrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					break;
+				
+				case 3:
+					newPrimitive=new LinePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					break;
+				
+				case 4:
+					newPrimitive=new PointPrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					break;
+				
+				default:
+					Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: Unknown primitive type %d",primitiveType);
+				}
+			
+			/* Store the primitive: */
+			lastPickedPrimitive=addPrimitive(newPrimitive);
+			}
+		}
+	catch(std::runtime_error err)
+		{
+		Vrui::showErrorMessage("Load Primitives",err.what());
 		}
 	}
 
 void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
 	{
-	/* Open the primitive file: */
-	Misc::File primitiveFile("Primitives.dat","wb",Misc::File::LittleEndian);
-	
-	/* Write the file header: */
-	char header[40];
-	snprintf(header,sizeof(header),"LidarViewer primitive file v1.2       \n");
-	primitiveFile.write<char>(header,sizeof(header));
-	
-	/* Write all primitives to the file: */
-	for(std::vector<Primitive*>::const_iterator pIt=primitives.begin();pIt!=primitives.end();++pIt)
+	try
 		{
-		/* Determine and write the primitive type: */
-		if(dynamic_cast<const PlanePrimitive*>(*pIt)!=0)
-			primitiveFile.write<int>(0);
-		else if(dynamic_cast<const SpherePrimitive*>(*pIt)!=0)
-			primitiveFile.write<int>(1);
-		else if(dynamic_cast<const CylinderPrimitive*>(*pIt)!=0)
-			primitiveFile.write<int>(2);
-		else if(dynamic_cast<const LinePrimitive*>(*pIt)!=0)
-			primitiveFile.write<int>(3);
-		else if(dynamic_cast<const PointPrimitive*>(*pIt)!=0)
-			primitiveFile.write<int>(4);
+		/* Open the primitive file: */
+		IO::AutoFile primitiveFile(Vrui::openFile(Misc::createNumberedFileName("SavedPrimitives.dat",4).c_str(),IO::File::WriteOnly));
+		primitiveFile->setEndianness(IO::File::LittleEndian);
 		
-		/* Write the primitive: */
-		(*pIt)->write(primitiveFile,Primitive::Vector(octree->getPointOffset()));
+		/* Write the file header: */
+		char header[40];
+		snprintf(header,sizeof(header),"LidarViewer primitive file v1.2       \n");
+		primitiveFile->write<char>(header,sizeof(header));
+		
+		/* Write all primitives to the file: */
+		for(std::vector<Primitive*>::const_iterator pIt=primitives.begin();pIt!=primitives.end();++pIt)
+			{
+			/* Determine and write the primitive type: */
+			if(dynamic_cast<const PlanePrimitive*>(*pIt)!=0)
+				primitiveFile->write<int>(0);
+			else if(dynamic_cast<const SpherePrimitive*>(*pIt)!=0)
+				primitiveFile->write<int>(1);
+			else if(dynamic_cast<const CylinderPrimitive*>(*pIt)!=0)
+				primitiveFile->write<int>(2);
+			else if(dynamic_cast<const LinePrimitive*>(*pIt)!=0)
+				primitiveFile->write<int>(3);
+			else if(dynamic_cast<const PointPrimitive*>(*pIt)!=0)
+				primitiveFile->write<int>(4);
+			
+			/* Write the primitive: */
+			(*pIt)->write(*primitiveFile,Primitive::Vector(octrees[0]->getPointOffset()));
+			}
+		}
+	catch(std::runtime_error err)
+		{
+		Vrui::showErrorMessage("Save Primitives",err.what());
 		}
 	}
 
@@ -1483,8 +1551,8 @@ void LidarViewer::showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCa
 	{
 	if(cbData->set)
 		{
-		/* Open the render dialog at the same position as the main menu: */
-		Vrui::getWidgetManager()->popupPrimaryWidget(renderDialog,Vrui::getWidgetManager()->calcWidgetTransformation(mainMenu));
+		/* Open the render dialog: */
+		Vrui::popupPrimaryWidget(renderDialog);
 		}
 	else
 		{
@@ -1498,8 +1566,9 @@ void LidarViewer::renderQualitySliderCallback(GLMotif::TextFieldSlider::ValueCha
 	/* Get the new render quality: */
 	renderQuality=Scalar(cbData->value);
 	
-	/* Set the octree's render quality: */
-	octree->setRenderQuality(renderQuality);
+	/* Set all octrees' render quality: */
+	for(int i=0;i<numOctrees;++i)
+		octrees[i]->setRenderQuality(renderQuality);
 	}
 
 void LidarViewer::fncWeightSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
@@ -1568,8 +1637,8 @@ void LidarViewer::showInteractionDialogCallback(GLMotif::ToggleButton::ValueChan
 	{
 	if(cbData->set)
 		{
-		/* Open the interaction dialog at the same position as the main menu: */
-		Vrui::getWidgetManager()->popupPrimaryWidget(interactionDialog,Vrui::getWidgetManager()->calcWidgetTransformation(mainMenu));
+		/* Open the interaction dialog: */
+		Vrui::popupPrimaryWidget(interactionDialog);
 		}
 	else
 		{

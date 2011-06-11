@@ -254,7 +254,7 @@ BruntonPrimitive::BruntonPrimitive(Comm::MulticastPipe* pipe)
 	buildBrunton();
 	}
 
-BruntonPrimitive::BruntonPrimitive(Misc::File& file,const Primitive::Vector& translation)
+BruntonPrimitive::BruntonPrimitive(IO::File& file,const Primitive::Vector& translation)
 	:PlanePrimitive(file,translation)
 	{
 	buildBrunton();

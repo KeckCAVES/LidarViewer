@@ -59,13 +59,13 @@ class CylinderPrimitive:public LinePrimitive,public GLObject
 	public:
 	CylinderPrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates cylinder by processing selected points from the given octree; writes result to given pipe if !=0
 	CylinderPrimitive(Comm::MulticastPipe* pipe); // Creates cylinder by reading cylinder data from given pipe
-	CylinderPrimitive(Misc::File& file,const Vector& translation); // Reads a cylinder primitive from a binary file
+	CylinderPrimitive(IO::File& file,const Vector& translation); // Reads a cylinder primitive from a binary file
 	
 	/* Methods: */
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const;
 	virtual void initContext(GLContextData& contextData) const;
 	virtual void glRenderAction(GLContextData& contextData) const;
-	virtual void write(Misc::File& file,const Vector& translation) const;
+	virtual void write(IO::File& file,const Vector& translation) const;
 	};
 
 #endif

@@ -1,7 +1,7 @@
 /***********************************************************************
 LoadPointSet - Helper function to load a 2D point set into LiDAR Viewer
 by elevating the points to the implicit LiDAR point cloud surface.
-Copyright (c) 2010 Oliver Kreylos
+Copyright (c) 2010-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 

@@ -40,7 +40,7 @@ class BruntonPrimitive:public PlanePrimitive
 	public:
 	BruntonPrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates brunton by processing selected points from the given octree; writes result to given pipe if !=0
 	BruntonPrimitive(Comm::MulticastPipe* pipe); // Creates brunton by reading brunton data from given pipe
-	BruntonPrimitive(Misc::File& file,const Vector& translation); // Reads a brunton primitive from a binary file
+	BruntonPrimitive(IO::File& file,const Vector& translation); // Reads a brunton primitive from a binary file
 	virtual ~BruntonPrimitive(void);
 	};
 

@@ -20,12 +20,12 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
+#include "LidarOctree.h"
+
 #include <string.h>
 #include <string>
 #include <iostream>
 #include <iomanip>
-#include <Math/Math.h>
-#include <Math/Constants.h>
 #include <Geometry/Ray.h>
 #include <Geometry/Box.h>
 #include <GL/gl.h>
@@ -37,8 +37,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLFrustum.h>
 
 #include "CoarseningHeap.h"
-
-#include "LidarOctree.h"
 
 /**********************************
 Methods of class LidarOctree::Node:
@@ -68,60 +66,75 @@ Helper function:
 
 template <class VertexParam>
 inline
-Scalar
-intersectRayWithPoints(
-	const LidarOctree::Ray& ray,
-	Scalar lambdaMin,
-	Scalar coneAngle2,
+void
+intersectConeWithPoints(
+	LidarOctree::ConeIntersection& cone,
 	const VertexParam* points,
 	unsigned int numPoints)
 	{
-	/* Intersect the ray with all points in this node: */
+	/* Intersect the cone with all points in this node: */
 	for(unsigned int i=0;i<numPoints;++i)
 		{
-		/* Check if the point is closer than the previous one and inside the cone: */
-		Vector sp=points[i].position-ray.getOrigin();
-		Scalar x=sp*ray.getDirection();
-		if(x>Scalar(0)&&x<lambdaMin)
+		/* Check if the point is inside the cone: */
+		Vector sp=points[i].position-cone.ray.getOrigin();
+		Scalar sp2=Geometry::sqr(sp);
+		Scalar xd=sp*cone.ray.getDirection();
+		if(xd>=Scalar(0)&&Math::sqr(xd)>=cone.coneAngleCos2*cone.d2*sp2)
 			{
-			Scalar y2=Geometry::sqr(Geometry::cross(sp,ray.getDirection()));
-			if(y2/Math::sqr(x)<=coneAngle2)
-				lambdaMin=x;
+			/* Calculate the point's adjusted ray parameter: */
+			Scalar lambda=xd/cone.d2;
+			Scalar y2=sp2-Math::sqr(xd)/cone.d2;
+			Scalar testLambda=lambda;
+			if(y2>Scalar(0))
+				testLambda+=Math::sqrt(y2*cone.d2*Scalar(2.0));
+			
+			/* Check against the parameter range: */
+			if(testLambda>=cone.testLambda1&&testLambda<cone.testLambdaMin)
+				{
+				cone.testLambdaMin=testLambda;
+				cone.lambdaMin=lambda;
+				}
 			}
 		}
-	return lambdaMin;
 	}
 
 }
 
-Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAngle2,Scalar lambda1,Scalar lambda2) const
+void LidarOctree::Node::intersectCone(LidarOctree::ConeIntersection& cone) const
 	{
 	if(children!=0)
 		{
 		#if 1
-		Scalar lambdaMin=lambda2;
+		
+		/* Store the query's original ray parameter range: */
+		Scalar testLambda1=cone.testLambda1;
+		Scalar testLambda2=cone.testLambda2;
+		
+		/* Process all children: */
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			/* Convert the child's domain into a box: */
 			Geometry::Box<Scalar,3> childDomainBox(children[childIndex].domain.getMin(),children[childIndex].domain.getMax());
 			
 			/* Intersect the ray with the child's domain: */
-			std::pair<Scalar,Scalar> lambdas=childDomainBox.getRayParameters(ray);
-			if(lambdas.first<lambda1)
-				lambdas.first=lambda1;
-			if(lambdas.second>lambda2)
-				lambdas.second=lambda2;
+			std::pair<Scalar,Scalar> lambdas=childDomainBox.getRayParameters(cone.ray);
+			if(lambdas.first<testLambda1)
+				lambdas.first=testLambda1;
+			if(lambdas.second>cone.testLambdaMin)
+				lambdas.second=cone.testLambdaMin;
 			
 			/* Recurse into the child if the ray intersects its domain: */
 			if(lambdas.first<lambdas.second)
 				{
-				Scalar lambda=children[childIndex].intersectRay(ray,coneAngle2,lambdas.first,lambdas.second);
-				if(lambda<lambdas.second&&lambdaMin>lambda)
-					lambdaMin=lambda;
+				/* Run the intersection test on the reduced parameter range: */
+				cone.testLambda1=lambdas.first;
+				cone.testLambda2=lambdas.second;
+				children[childIndex].intersectCone(cone);
 				}
 			}
-		return lambdaMin;
+		
 		#else
+		
 		/* Determine the child node containing the ray's start point and the ray parameters at which the ray intersects the child node's separating planes: */
 		int childIndex=0x0;
 		Scalar planeLambdas[3];
@@ -159,7 +172,7 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 					}
 			
 			/* Check the current child: */
-			Scalar childLambda=children[childIndex].intersectRay(ray,coneAngle2,lambda1,nextLambda);
+			Scalar childLambda=children[childIndex].intersectRay(ray,coneAngleCos2,lambda1,nextLambda);
 			
 			/* If the current child reported an intersection, return it: */
 			if(childLambda<nextLambda)
@@ -172,15 +185,16 @@ Scalar LidarOctree::Node::intersectRay(const LidarOctree::Ray& ray,Scalar coneAn
 		
 		/* No intersections found: */
 		return lambda2;
+		
 		#endif
 		}
 	else
 		{
-		/* Intersect the ray with all points in this node: */
+		/* Intersect the cone with all points in this node: */
 		if(haveNormals)
-			return intersectRayWithPoints(ray,lambda2,coneAngle2,static_cast<const NVertex*>(points),numPoints);
+			intersectConeWithPoints(cone,static_cast<const NVertex*>(points),numPoints);
 		else
-			return intersectRayWithPoints(ray,lambda2,coneAngle2,static_cast<const Vertex*>(points),numPoints);
+			intersectConeWithPoints(cone,static_cast<const Vertex*>(points),numPoints);
 		}
 	}
 
@@ -1388,26 +1402,34 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextDa
 	// std::cout<<dataItem->numRenderedNodes<<", "<<dataItem->numCacheMisses<<", "<<dataItem->numCacheBypasses<<", "<<dataItem->numRenderedPoints<<", "<<dataItem->numBypassedPoints<<std::endl;
 	}
 
-Scalar LidarOctree::intersectRay(const LidarOctree::Ray& ray,Scalar coneAngle) const
+void LidarOctree::intersectCone(LidarOctree::ConeIntersection& cone) const
 	{
+	/* Store the query's original ray parameter range: */
+	Scalar testLambda1=cone.testLambda1;
+	Scalar testLambda2=cone.testLambda2;
+	
 	/* Convert the root's domain into a box: */
 	Geometry::Box<Scalar,3> rootDomainBox(root.domain.getMin(),root.domain.getMax());
 	
 	/* Intersect the ray with the root's domain: */
-	std::pair<Scalar,Scalar> lambdas=rootDomainBox.getRayParameters(ray);
-	if(lambdas.first<Scalar(0))
-		lambdas.first=Scalar(0);
+	std::pair<Scalar,Scalar> lambdas=rootDomainBox.getRayParameters(cone.ray);
+	if(lambdas.first<testLambda1)
+		lambdas.first=testLambda1;
+	if(lambdas.second>testLambda2)
+		lambdas.second=testLambda2;
 	
-	/* Bail out if the ray misses the domain entirely: */
-	if(lambdas.first>=lambdas.second)
-		return Scalar(-1);
-	
-	/* Recursively intersect the ray with all nodes: */
-	Scalar lambda=root.intersectRay(ray,Math::sqr(coneAngle),lambdas.first,lambdas.second);
-	if(lambda<lambdas.second)
-		return lambda;
-	else
-		return Scalar(-1);
+	/* Check if the cone intersects the domain at all: */
+	if(lambdas.first<lambdas.second)
+		{
+		/* Recursively intersect the cone with all nodes: */
+		cone.testLambda1=lambdas.first;
+		cone.testLambda2=lambdas.second;
+		root.intersectCone(cone);
+		
+		/* Restore the original ray parameter range: */
+		cone.testLambda1=testLambda1;
+		cone.testLambda2=testLambda2;
+		}
 	}
 
 void LidarOctree::interact(const LidarOctree::Interactor& interactor)

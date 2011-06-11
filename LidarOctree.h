@@ -28,6 +28,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Threads/Mutex.h>
 #include <Threads/Cond.h>
 #include <Threads/Thread.h>
+#include <Math/Math.h>
+#include <Math/Constants.h>
 #include <GL/gl.h>
 #include <GL/GLColor.h>
 #include <GL/GLObject.h>
@@ -76,6 +78,48 @@ class LidarOctree:public GLObject
 	typedef GLFrustum<Scalar> Frustum; // Data type to represent view frusta
 	typedef GLColor<GLubyte,4> Color; // Type for point colors
 	
+	struct ConeIntersection // Helper structure containing necessary state for cone intersection queries
+		{
+		/* Elements: */
+		public:
+		Ray ray; // The apex and axis direction of the intersection cone
+		Scalar d2; // The squared length of the ray's direction vector
+		Scalar coneAngleCos2; // The squared cosine of the intersection cone's opening angle
+		Scalar testLambda1,testLambda2; // Range of valid adjusted ray parameters for the cone query
+		Scalar testLambdaMin; // The smallest adjusted ray parameter already encountered
+		Scalar lambdaMin; // The true ray parameter associated with the smallest adjusted ray parameter
+		
+		/* Constructors and destructors: */
+		ConeIntersection(const Ray& sRay,Scalar sConeAngleCos) // Creates a cone query for the given axis ray and opening angle cosine
+			:ray(sRay),d2(Geometry::sqr(ray.getDirection())),
+			 coneAngleCos2(Math::sqr(sConeAngleCos)),
+			 testLambda1(0),testLambda2(Math::Constants<Scalar>::max),
+			 testLambdaMin(testLambda2),lambdaMin(testLambda2)
+			{
+			}
+		ConeIntersection(const Ray& sRay,Scalar sConeAngleCos,Scalar sTestLambda1,Scalar sTestLambda2) // Ditto, with adjusted ray parameter limits
+			:ray(sRay),d2(Geometry::sqr(ray.getDirection())),
+			 coneAngleCos2(Math::sqr(sConeAngleCos)),
+			 testLambda1(sTestLambda1),testLambda2(sTestLambda2),
+			 testLambdaMin(testLambda2),lambdaMin(testLambda2)
+			{
+			}
+		
+		/* Methods: */
+		bool isValid(void) const // Returns true if a valid intersection was found
+			{
+			return testLambdaMin<testLambda2;
+			}
+		Scalar getParameter(void) const // Returns the closest intersection ray parameter
+			{
+			return lambdaMin;
+			}
+		Point getIntersection(void) const // Returns the intersection point; assumes valid intersection was found
+			{
+			return ray(lambdaMin);
+			}
+		};
+	
 	private:
 	typedef GLGeometry::Vertex<void,0,GLubyte,4,void,float,3> Vertex; // Type for rendered points
 	typedef GLGeometry::Vertex<void,0,GLubyte,4,float,float,3> NVertex; // Type for rendered points with normal vectors
@@ -119,7 +163,7 @@ class LidarOctree:public GLObject
 		~Node(void); // Destroys a node and its subtree
 		
 		/* Methods: */
-		Scalar intersectRay(const Ray& ray,Scalar coneAngle2,Scalar lambda1,Scalar lambda2) const; // Recursively intersects a ray with this node's subtree
+		void intersectCone(ConeIntersection& cone) const; // Recursively intersects a cone with this node's subtree
 		};
 	
 	struct SubdivisionRequest // Structure to store subdivision request for nodes
@@ -268,7 +312,7 @@ class LidarOctree:public GLObject
 	void setFocusAndContext(const Point& newFncCenter,Scalar newFncRadius,Scalar newFncWeight); // Adjusts focus+context LOD adjustment parameters
 	void startRenderPass(void); // Starts the next rendering pass of the point octree
 	void glRenderAction(const Frustum& frustum,GLContextData& contextData) const;
-	Scalar intersectRay(const Ray& ray,Scalar coneAngle) const; // Intersects a ray with all points in the current octree; returns ray parameter of first hit or a negative number if no hits
+	void intersectCone(ConeIntersection& cone) const; // Intersects a cone with all points in the current octree
 	void interact(const Interactor& interactor); // Prepares an octree for interaction with an interactor
 	void selectPoints(const Interactor& interactor); // Selects all points inside the interactor's region of influence
 	void deselectPoints(const Interactor& interactor); // Deselects all points inside the interactor's region of influence

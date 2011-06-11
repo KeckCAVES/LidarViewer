@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2010 Oliver Kreylos
+# Copyright (c) 2004-2011 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -25,7 +25,7 @@
 # same setting in Vrui's makefile. By default the directories match; if
 # the installation directory was adjusted during Vrui's installation, it
 # must be adjusted here as well.
-VRUIDIR = $(HOME)/Vrui-2.0
+VRUIDIR = $(HOME)/Vrui-2.1
 
 # Base installation directory for LiDAR Viewer and its configuration
 # file.If this is set to the default of $(PWD), LiDAR Viewer does not
@@ -34,17 +34,31 @@ VRUIDIR = $(HOME)/Vrui-2.0
 # underneath the given base directory, respectively.
 INSTALLDIR = $(shell pwd)
 
-# Set up additional flags for the C++ compiler:
-CFLAGS = 
+########################################################################
+# Nothing underneath here needs to be changed.
+########################################################################
+
+# Version number for installation subdirectories. This is used to keep
+# subsequent release versions of LiDAR Viewer from clobbering each
+# other. The value should be identical to the major.minor version
+# number found in VERSION in the root package directory.
+VERSION = 2.7
 
 # Set up destination directories for compilation products:
 OBJDIRBASE = o
 BINDIRBASE = bin
 
+# Set up resource directories: */
+CONFIGDIR = etc/LidarViewer-$(VERSION)
+
+# Set up additional flags for the C++ compiler:
+CFLAGS = 
+
 # Create debug or fully optimized versions of the software:
+VRUIMAKEDIR = $(VRUIDIR)/share
 ifdef DEBUG
   # Include the debug version of the Vrui application makefile fragment:
-  include $(VRUIDIR)/etc/Vrui.debug.makeinclude
+  include $(VRUIMAKEDIR)/Vrui.debug.makeinclude
   # Enable debugging and disable optimization:
   CFLAGS += -g3 -O0
   # Set destination directories for created objects:
@@ -52,13 +66,17 @@ ifdef DEBUG
   BINDIR = $(BINDIRBASE)/debug
 else
   # Include the release version of the Vrui application makefile fragment:
-  include $(VRUIDIR)/etc/Vrui.makeinclude
+  include $(VRUIMAKEDIR)/Vrui.makeinclude
   # Disable debugging and enable optimization:
   CFLAGS += -g0 -O3 -DNDEBUG
   # Set destination directories for created objects:
   OBJDIR = $(OBJDIRBASE)
   BINDIR = $(BINDIRBASE)
 endif
+
+# Set up installation directory structure:
+BININSTALLDIR = $(INSTALLDIR)/$(BINDIRBASE)
+ETCINSTALLDIR = $(INSTALLDIR)/$(CONFIGDIR)
 
 # Pattern rule to compile C++ sources:
 $(OBJDIR)/%.o: %.cpp
@@ -72,6 +90,7 @@ ALL = $(BINDIR)/CalcLasRange \
       $(BINDIR)/LidarSubtractor \
       $(BINDIR)/LidarIlluminator \
       $(BINDIR)/PaulBunyan \
+      $(BINDIR)/LidarExporter \
       $(BINDIR)/LidarGridder \
       $(BINDIR)/LidarViewer \
       $(BINDIR)/PointSetSimilarity \
@@ -107,7 +126,7 @@ LIDARPREPROCESSOR_SOURCES = SplitPoints.cpp \
                             ReadPlyFile.cpp \
                             LidarPreprocessor.cpp
 
-$(OBJDIR)/LidarPreprocessor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'
+$(OBJDIR)/LidarPreprocessor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
 
 $(BINDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 	@mkdir -p $(BINDIR)
@@ -151,6 +170,16 @@ $(BINDIR)/PaulBunyan: $(PAULBUNYAN_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: PaulBunyan
 PaulBunyan: $(BINDIR)/PaulBunyan
 
+LIDAREXPORTER_SOURCES = LidarProcessOctree.cpp \
+                        LidarExporter.cpp
+
+$(BINDIR)/LidarExporter: $(LIDAREXPORTER_SOURCES:%.cpp=$(OBJDIR)/%.o)
+	@mkdir -p $(BINDIR)
+	@echo Linking $@...
+	@g++ -o $@ $^ $(VRUI_LINKFLAGS)
+.PHONY: LidarExporter
+LidarExporter: $(BINDIR)/LidarExporter
+
 LIDARGRIDDER_SOURCES = LidarProcessOctree.cpp \
                        LidarGridder.cpp
 
@@ -162,6 +191,7 @@ $(BINDIR)/LidarGridder: $(LIDARGRIDDER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 LidarGridder: $(BINDIR)/LidarGridder
 
 LIDARVIEWER_SOURCES = LidarOctree.cpp \
+                      PointBasedLightingShader.cpp \
                       LidarTool.cpp \
                       PlanePrimitive.cpp \
                       BruntonPrimitive.cpp \
@@ -171,13 +201,12 @@ LIDARVIEWER_SOURCES = LidarOctree.cpp \
                       CylinderPrimitive.cpp \
                       ProfileExtractor.cpp \
                       ProfileTool.cpp \
-                      PointBasedLightingShader.cpp \
                       SceneGraph.cpp \
                       LidarProcessOctree.cpp \
                       LoadPointSet.cpp \
                       LidarViewer.cpp
 
-$(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(INSTALLDIR)/etc/LidarViewer.cfg"'
+$(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
 
 $(BINDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 	@mkdir -p $(BINDIR)
@@ -203,13 +232,7 @@ PrintPrimitiveFile: $(BINDIR)/PrintPrimitiveFile
 install: $(ALL)
 	@echo Installing LiDAR Viewer in $(INSTALLDIR)...
 	@install -d $(INSTALLDIR)
-	@install -d $(INSTALLDIR)/bin
-	@install $(BINDIR)/CalcLasRange $(INSTALLDIR)/bin
-	@install $(BINDIR)/LidarPreprocessor $(INSTALLDIR)/bin
-	@install $(BINDIR)/LidarSubtractor $(INSTALLDIR)/bin
-	@install $(BINDIR)/LidarIlluminator $(INSTALLDIR)/bin
-	@install $(BINDIR)/LidarViewer $(INSTALLDIR)/bin
-	@install $(BINDIR)/PointSetSimilarity $(INSTALLDIR)/bin
-	@install $(BINDIR)/PrintPrimitiveFile $(INSTALLDIR)/bin
-	@install -d $(INSTALLDIR)/etc
-	@install etc/LidarViewer.cfg $(INSTALLDIR)/etc
+	@install -d $(BININSTALLDIR)
+	@install $(ALL) $(BININSTALLDIR)
+	@install -d $(ETCINSTALLDIR)
+	@install $(CONFIGDIR)/LidarViewer.cfg $(ETCINSTALLDIR)

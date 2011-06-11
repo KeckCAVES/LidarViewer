@@ -28,6 +28,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <vector>
 #include <Misc/File.h>
 #include <Misc/Timer.h>
+#include <IO/File.h>
+#include <IO/OpenFile.h>
 #include <Threads/Thread.h>
 #include <Math/Constants.h>
 #include <Math/Random.h>
@@ -35,6 +37,27 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "LidarTypes.h"
 #include "LidarProcessOctree.h"
+
+#if 0
+
+int main(int argc,char* argv[])
+	{
+	LidarProcessOctree lpo(argv[1],512*1024*1024);
+	
+	Misc::Timer t;
+	
+	size_t numLeafPoints=0;
+	for(LidarProcessOctree::PointIterator pIt=lpo.beginNodes();pIt!=lpo.endNodes();++pIt)
+		++numLeafPoints;
+	
+	t.elapse();
+	std::cout<<numLeafPoints<<" leaf points, ";
+	std::cout<<"done in "<<t.getTime()*1000.0<<" ms"<<std::endl;
+	
+	return 0;
+	}
+
+#elif 1
 
 class PointCounter // Functor class to count the number of points stored in an octree file
 	{
@@ -193,11 +216,59 @@ class PointSaver
 		}
 	};
 
+class BinaryPointSaver
+	{
+	/* Elements: */
+	private:
+	IO::SeekableFile* resultFile;
+	size_t numPoints;
+	
+	/* Constructors and destructors: */
+	public:
+	BinaryPointSaver(const char* resultFileName)
+		:resultFile(IO::openSeekableFile(resultFileName,IO::File::WriteOnly)),
+		 numPoints(0)
+		{
+		/* Write the initial number of points: */
+		resultFile->setEndianness(IO::File::LittleEndian);
+		resultFile->write<unsigned int>(0);
+		}
+	~BinaryPointSaver(void)
+		{
+		/* Write the final number of points: */
+		resultFile->setWritePosAbs(0);
+		resultFile->write<unsigned int>(numPoints);
+		std::cout<<numPoints<<" points written to binary file"<<std::endl;
+		delete resultFile;
+		}
+	
+	/* Methods: */
+	void operator()(const LidarPoint& point)
+		{
+		float pd[4];
+		for(int i=0;i<3;++i)
+			pd[i]=float(point[i]);
+		pd[3]=float(point.value[0])*0.3f+float(point.value[1])*0.59f+float(point.value[2])*0.11f;
+		resultFile->write<float>(pd,4);
+		++numPoints;
+		}
+	};
+
 int main(int argc,char* argv[])
 	{
 	LidarProcessOctree lpo(argv[1],512*1024*1024);
 	
 	#if 1
+	Misc::Timer t;
+	{
+	// BinaryPointSaver bps(argv[2]);
+	PointCounter pc;
+	lpo.processPoints(pc);
+	std::cout<<pc.getNumPoints()<<std::endl;
+	}
+	t.elapse();
+	std::cout<<"Done in "<<t.getTime()*1000.0<<" ms"<<std::endl;
+	#elif 0
 	PointSaver ps(argv[2]);
 	Box box=Box::full;
 	for(int i=0;i<2;++i)
@@ -229,7 +300,7 @@ int main(int argc,char* argv[])
 	return 0;
 	}
 
-#if 0
+#else
 
 class NearestNeighborFinder // Functor class to find the nearest non-duplicate neighbor of a point in an octree file
 	{
@@ -562,7 +633,7 @@ int main(int argc,char* argv[])
 	/* Create a processing octree: */
 	LidarProcessOctree lpo(fileName,size_t(cacheSize)*size_t(1024*1024));
 	
-	#if 1
+	#if 0
 	
 	/* Count the number of points in the octree: */
 	PointCounter pc;
@@ -572,7 +643,7 @@ int main(int argc,char* argv[])
 	lpo.processPointsInBox(box,pc);
 	std::cout<<"Octree contains "<<pc.getNumPoints()<<" points"<<std::endl;
 	
-	#elif 0
+	#elif 1
 	
 	if(maxNumNeighbors==1)
 		{

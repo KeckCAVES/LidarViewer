@@ -24,7 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
+#include <IO/File.h>
 #include <Comm/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
@@ -381,7 +381,7 @@ LinePrimitive::LinePrimitive(Comm::MulticastPipe* pipe)
 	length=pipe->read<Scalar>();
 	}
 
-LinePrimitive::LinePrimitive(Misc::File& file,const Primitive::Vector& translation)
+LinePrimitive::LinePrimitive(IO::File& file,const Primitive::Vector& translation)
 	{
 	/* Read the number of points and the RMS residual: */
 	numPoints=file.read<unsigned int>();
@@ -432,7 +432,7 @@ void LinePrimitive::glRenderAction(GLContextData& contextData) const
 	glPopAttrib();
 	}
 
-void LinePrimitive::write(Misc::File& file,const Primitive::Vector& translation) const
+void LinePrimitive::write(IO::File& file,const Primitive::Vector& translation) const
 	{
 	/* Write the number of points and the RMS residual: */
 	file.write<unsigned int>((unsigned int)(numPoints));

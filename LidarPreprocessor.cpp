@@ -1,6 +1,6 @@
 /***********************************************************************
 New version of LiDAR data preprocessor.
-Copyright (c) 2005-2009 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -29,14 +29,13 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/ThrowStdErr.h>
 #include <Misc/Endianness.h>
 #include <Misc/FileNameExtensions.h>
-#include <Misc/File.h>
-#include <Misc/LargeFile.h>
-#include <Misc/FileCharacterSource.h>
-#include <Threads/GzippedFileCharacterSource.h>
-#include <Misc/ValueSource.h>
 #include <Misc/Timer.h>
 #include <Misc/StandardValueCoders.h>
 #include <Misc/ConfigurationFile.h>
+#include <IO/File.h>
+#include <IO/SeekableFile.h>
+#include <IO/OpenFile.h>
+#include <IO/ValueSource.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
 #include <Geometry/OrthonormalTransformation.h>
@@ -51,17 +50,18 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 void loadPointFileBin(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the binary input file: */
-	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoFile file(IO::openFile(fileName));
+	file->setEndianness(IO::File::LittleEndian);
 	
 	/* Read the number of points in the file: */
-	size_t numPoints=file.read<unsigned int>();
+	size_t numPoints=file->read<unsigned int>();
 	
 	/* Read all points: */
 	for(size_t i=0;i<numPoints;++i)
 		{
 		/* Read the point position and intensity from the input file: */
 		float rp[4];
-		file.read(rp,4);
+		file->read(rp,4);
 		
 		/* Store the point position: */
 		LidarPoint p;
@@ -81,19 +81,20 @@ void loadPointFileBin(PointAccumulator& pa,const char* fileName,const float colo
 void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the binary input file: */
-	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoFile file(IO::openFile(fileName));
+	file->setEndianness(IO::File::LittleEndian);
 	
 	/* Read the number of points in the file: */
-	size_t numPoints=file.read<unsigned int>();
+	size_t numPoints=file->read<unsigned int>();
 	
 	/* Read all points: */
 	for(size_t i=0;i<numPoints;++i)
 		{
 		/* Read the point position and color from the input file: */
 		float rp[3];
-		file.read(rp,3);
+		file->read(rp,3);
 		Color::Scalar rcol[4];
-		file.read(rcol,4);
+		file->read(rcol,4);
 		
 		/* Store the point position: */
 		LidarPoint p;
@@ -110,46 +111,46 @@ void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName,const float c
 		}
 	}
 
-void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
+void loadPointFileLas(PointAccumulator& pa,const char* fileName,unsigned int classMask,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the LAS input file: */
-	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoSeekableFile file(IO::openSeekableFile(fileName));
+	file->setEndianness(IO::File::LittleEndian);
 	
 	/* Read the LAS file header: */
 	char signature[4];
-	file.read(signature,4);
+	file->read(signature,4);
 	if(memcmp(signature,"LASF",4)!=0)
 		return;
 	
-	char dummy[32];
-	file.read<unsigned short>(); // Ignore file source ID
-	file.read<unsigned short>(); // Ignore reserved field
-	file.read<unsigned int>(); // Ignore project ID
-	file.read<unsigned short>(); // Ignore project ID
-	file.read<unsigned short>(); // Ignore project ID
-	file.read(dummy,8); // Ignore project ID
-	file.read(dummy,2); // Ignore file version number
-	file.read(dummy,32); // Ignore system identifier
-	file.read(dummy,32); // Ignore generating software
-	file.read<unsigned short>(); // Ignore file creation day of year
-	file.read<unsigned short>(); // Ignore file creation year
-	file.read<unsigned short>(); // Ignore header size
-	Misc::LargeFile::Offset pointDataOffset=Misc::LargeFile::Offset(file.read<unsigned int>());
-	file.read<unsigned int>(); // Ignore number of variable-length records
-	unsigned char pointDataFormat=file.read<unsigned char>();
-	unsigned short pointDataRecordLength=file.read<unsigned short>();
-	size_t numPointRecords=file.read<unsigned int>();
+	file->skip<unsigned short>(1); // Ignore file source ID
+	file->skip<unsigned short>(1); // Ignore reserved field
+	file->skip<unsigned int>(1); // Ignore project ID
+	file->skip<unsigned short>(1); // Ignore project ID
+	file->skip<unsigned short>(1); // Ignore project ID
+	file->skip<char>(8); // Ignore project ID
+	file->skip<char>(2); // Ignore file version number
+	file->skip<char>(32); // Ignore system identifier
+	file->skip<char>(32); // Ignore generating software
+	file->skip<unsigned short>(1); // Ignore file creation day of year
+	file->skip<unsigned short>(1); // Ignore file creation year
+	file->skip<unsigned short>(1); // Ignore header size
+	IO::SeekableFile::Offset pointDataOffset=IO::SeekableFile::Offset(file->read<unsigned int>());
+	file->skip<unsigned int>(1); // Ignore number of variable-length records
+	unsigned char pointDataFormat=file->read<unsigned char>();
+	unsigned short pointDataRecordLength=file->read<unsigned short>();
+	size_t numPointRecords=file->read<unsigned int>();
 	unsigned int numPointsByReturn[5];
-	file.read(numPointsByReturn,5);
+	file->read(numPointsByReturn,5);
 	double scale[3];
-	file.read(scale,3);
+	file->read(scale,3);
 	double offset[3];
-	file.read(offset,3);
+	file->read(offset,3);
 	double min[3],max[3];
 	for(int i=0;i<3;++i)
 		{
-		max[i]=file.read<double>();
-		min[i]=file.read<double>();
+		max[i]=file->read<double>();
+		min[i]=file->read<double>();
 		}
 	
 	/* Check the LAS file header for sanity: */
@@ -184,7 +185,7 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 		offset[i]+=pointOffset[i];
 	
 	/* Read all points: */
-	file.seekSet(pointDataOffset);
+	file->setReadPosAbs(pointDataOffset);
 	for(size_t i=0;i<numPointRecords;++i)
 		{
 		/* Read this point: */
@@ -192,24 +193,32 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 		
 		/* Read the point position: */
 		int pos[3];
-		file.read(pos,3);
+		file->read(pos,3);
 		for(int j=0;j<3;++j)
 			p[j]=float(double(pos[j])*scale[j]+offset[j]);
 		
 		/* Read the point intensity: */
-		float intensity=float(file.read<unsigned short>());
+		float intensity=float(file->read<unsigned short>());
 		
-		/* Skip irrelevant information: */
-		char dummy[4];
-		file.read(dummy,4);
-		file.read<unsigned short>();
+		/* Skip return data: */
+		file->skip<char>(1);
+		
+		/* Read the point classification: */
+		unsigned int classBit=0x1U<<(file->read<unsigned char>()&0x1fU);
+		
+		/* Skip angle and user: */
+		file->skip<unsigned char>(2);
+		
+		/* Skip source and time: */
+		file->skip<unsigned short>(1);
 		if(pointDataFormat&0x1)
-			file.read<double>();
+			file->skip<double>(1);
+		
 		if(pointDataFormat>=2)
 			{
 			/* Assign point color from stored RGB data: */
 			unsigned short rgb[3];
-			file.read(rgb,3);
+			file->read(rgb,3);
 			for(int j=0;j<3;++j)
 				p.value[j]=Color::clampRound(rgb[j]*colorMask[j]);
 			}
@@ -221,16 +230,19 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,const float colo
 			}
 		p.value[3]=Color::Scalar(255);
 		
-		/* Store the point: */
-		pa.addPoint(p);
+		if(classMask&classBit)
+			{
+			/* Store the point: */
+			pa.addPoint(p);
+			}
 		}
 	}
 
 void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the ASCII input file: */
-	Threads::GzippedFileCharacterSource file(fileName);
-	Misc::ValueSource reader(file);
+	IO::AutoFile file(IO::openFile(fileName));
+	IO::ValueSource reader(*file);
 	reader.setPunctuation('#',true);
 	reader.setPunctuation('\n',true);
 	reader.skipWs();
@@ -276,7 +288,7 @@ void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float col
 				/* Store the point: */
 				pa.addPoint(p);
 				}
-			catch(Misc::ValueSource::NumberError err)
+			catch(IO::ValueSource::NumberError err)
 				{
 				std::cerr<<"loadPointFileXyzi: Point parsing error in line "<<lineNumber<<std::endl;
 				}
@@ -299,8 +311,8 @@ void loadPointFileXyzi(PointAccumulator& pa,const char* fileName,const float col
 void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName,const float colorMask[3],const double pointOffset[3])
 	{
 	/* Open the ASCII input file: */
-	Threads::GzippedFileCharacterSource file(fileName);
-	Misc::ValueSource reader(file);
+	IO::AutoFile file(IO::openFile(fileName));
+	IO::ValueSource reader(*file);
 	reader.setPunctuation('#',true);
 	reader.setPunctuation('\n',true);
 	reader.skipWs();
@@ -347,7 +359,7 @@ void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName,const float c
 				/* Store the point: */
 				pa.addPoint(p);
 				}
-			catch(Misc::ValueSource::NumberError err)
+			catch(IO::ValueSource::NumberError err)
 				{
 				std::cerr<<"loadPointFileXyzrgb: Point parsing error in line "<<lineNumber<<std::endl;
 				}
@@ -384,11 +396,27 @@ void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,int num
 			componentColumnIndices[columnIndices[i]]=i;
 			++numComponents;
 			}
+	
+	/* Create color components if they are not given: */
+	if(rgb)
+		{
+		if(numComponents<6)
+			numComponents=6;
+		}
+	else
+		{
+		if(numComponents<4)
+			numComponents=4;
+		}
 	double* componentValues=new double[numComponents];
 	
+	/* Initialize the color components: */
+	for(int i=3;i<numComponents;++i)
+		componentValues[i]=255.0;
+	
 	/* Open the ASCII input file: */
-	Threads::GzippedFileCharacterSource file(fileName);
-	Misc::ValueSource reader(file);
+	IO::AutoFile file(IO::openFile(fileName));
+	IO::ValueSource reader(*file);
 	if(strictCsv)
 		reader.setWhitespace("");
 	reader.setPunctuation("#,\n");
@@ -486,6 +514,148 @@ void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,int num
 			reader.skipLine();
 			reader.skipWs();
 			++lineNumber;
+			}
+		}
+	catch(std::runtime_error err)
+		{
+		std::cerr<<"Caught exception "<<err.what()<<" in line "<<lineNumber<<" in input file "<<fileName<<std::endl;
+		}
+	
+	std::cout.setf(std::ios::fixed);
+	int prec=std::cout.precision();
+	std::cout<<std::setprecision(6);
+	std::cout<<"Bounding box: ["<<pMin[0]<<", "<<pMax[0]<<"] x ["<<pMin[1]<<", "<<pMax[1]<<"] x ["<<pMin[2]<<", "<<pMax[2]<<"]"<<std::endl;
+	std::cout<<std::setprecision(prec);
+	std::cout<<"RGB range: ["<<rgbMin[0]<<", "<<rgbMax[0]<<"] x ["<<rgbMin[1]<<", "<<rgbMax[1]<<"] x ["<<rgbMin[2]<<", "<<rgbMax[2]<<"]"<<std::endl;
+	
+	/* Clean up: */
+	delete[] componentColumnIndices;
+	delete[] componentValues;
+	}
+
+void loadPointFileBlockedASCII(PointAccumulator& pa,const char* fileName,int numHeaderLines,bool rgb,const int columnIndices[6],const float colorMask[3],const double pointOffset[3])
+	{
+	/* Create the mapping from column indices to point components: */
+	int maxColumnIndex=columnIndices[0];
+	for(int i=1;i<6;++i)
+		if(maxColumnIndex<columnIndices[i])
+			maxColumnIndex=columnIndices[i];
+	int* componentColumnIndices=new int[maxColumnIndex+1];
+	for(int i=0;i<=maxColumnIndex;++i)
+		componentColumnIndices[i]=-1;
+	int numComponents=0;
+	for(int i=0;i<6;++i)
+		if(columnIndices[i]>=0)
+			{
+			componentColumnIndices[columnIndices[i]]=i;
+			++numComponents;
+			}
+	double* componentValues=new double[numComponents];
+	
+	/* Open the ASCII input file: */
+	IO::AutoFile file(IO::openFile(fileName));
+	IO::ValueSource reader(*file);
+	reader.setPunctuation("#,\n");
+	reader.skipWs();
+	size_t lineNumber=1;
+	
+	/* Skip the header lines: */
+	for(int i=0;i<numHeaderLines;++i)
+		{
+		reader.skipLine();
+		reader.skipWs();
+		++lineNumber;
+		}
+	
+	/* Read all lines from the input file: */
+	LidarPoint::Scalar pMin[3],pMax[3];
+	float rgbMin[3],rgbMax[3];
+	for(int i=0;i<3;++i)
+		{
+		pMin[i]=Math::Constants<LidarPoint::Scalar>::max;
+		pMax[i]=Math::Constants<LidarPoint::Scalar>::min;
+		rgbMin[i]=Math::Constants<float>::max;
+		rgbMax[i]=Math::Constants<float>::min;
+		}
+	try
+		{
+		while(!reader.eof())
+			{
+			/* Read the number of points in the next block: */
+			int numPoints=reader.readInteger();
+			reader.skipLine();
+			reader.skipWs();
+			++lineNumber;
+			
+			/* Read all points in the block: */
+			for(int blockIndex=0;blockIndex<numPoints;++blockIndex)
+				{
+				/* Read all columns: */
+				for(int columnIndex=0;columnIndex<=maxColumnIndex;++columnIndex)
+					{
+					if(componentColumnIndices[columnIndex]>=0)
+						{
+						/* Read the next value: */
+						componentValues[componentColumnIndices[columnIndex]]=reader.readNumber();
+						}
+					else
+						reader.skipString();
+
+					if(columnIndex<maxColumnIndex)
+						{
+						/* Check for separator: */
+						if(reader.peekc()==',')
+							reader.skipString();
+						}
+					}
+
+				/* Store the point position: */
+				LidarPoint p;
+				for(int i=0;i<3;++i)
+					{
+					p[i]=LidarPoint::Scalar(componentValues[i]+pointOffset[i]);
+					if(pMin[i]>p[i])
+						pMin[i]=p[i];
+					if(pMax[i]<p[i])
+						pMax[i]=p[i];
+					}
+
+				if(rgb)
+					{
+					/* Modify the read RGB color according to the color mask: */
+					for(int i=0;i<3;++i)
+						{
+						float col=componentValues[3+i]*colorMask[i];
+						if(rgbMin[i]>col)
+							rgbMin[i]=col;
+						if(rgbMax[i]<col)
+							rgbMax[i]=col;
+						p.value[i]=Color::clampRound(col);
+						}
+					}
+				else
+					{
+					/* Convert the read intensity to an RGB color according to the color mask: */
+					for(int i=0;i<3;++i)
+						{
+						float col=componentValues[3]*colorMask[i];
+						if(rgbMin[i]>col)
+							rgbMin[i]=col;
+						if(rgbMax[i]<col)
+							rgbMax[i]=col;
+						p.value[i]=Color::clampRound(col);
+						}
+					}
+				p.value[3]=Color::Scalar(255);
+
+				/* Store the point: */
+				pa.addPoint(p);
+				
+				/* Skip to the next line: */
+				reader.skipLine();
+				reader.skipWs();
+				++lineNumber;
+				}
 			}
 		}
 	catch(std::runtime_error err)
@@ -625,10 +795,11 @@ double angdiadistscaled(double z)
 void loadPointFileIdl(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
 	/* Open the IDL input file: */
-	Misc::LargeFile file(fileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoFile file(IO::openFile(fileName));
+	file->setEndianness(IO::File::LittleEndian);
 	
 	/* Read the IDL file header: */
-	size_t numRecords=file.read<unsigned int>();
+	size_t numRecords=file->read<unsigned int>();
 	
 	/* Read all records: */
 	float massMin=Math::Constants<float>::max;
@@ -643,7 +814,7 @@ void loadPointFileIdl(PointAccumulator& pa,const char* fileName,const float colo
 		{
 		/* Read the next record: */
 		IDLFileRecord record;
-		file.read(record);
+		file->read(record);
 		
 		/* Create a point: */
 		LidarPoint p;
@@ -704,7 +875,7 @@ struct OldLidarOctreeFileHeader // Header structure for old LiDAR octree files
 	unsigned int maxNumPointsPerNode; // Maximum number of points stored in each octree node
 	
 	/* Constructors and destructors: */
-	OldLidarOctreeFileHeader(Misc::LargeFile& file) // Reads the header from file
+	OldLidarOctreeFileHeader(IO::File& file) // Reads the header from file
 		{
 		file.read(center.getComponents(),3);
 		file.read(radius);
@@ -722,13 +893,13 @@ struct OldLidarOctreeFileNode // Structure for a node in a LiDAR octree file
 	{
 	/* Elements: */
 	public:
-	Misc::LargeFile::Offset childrenOffset; // Offset of the node's children in the octree file (or 0 if leaf node)
+	IO::SeekableFile::Offset childrenOffset; // Offset of the node's children in the octree file (or 0 if leaf node)
 	Scalar detailSize; // Detail size of this node, for proper LOD computation
 	unsigned int numPoints; // Number of points in the node
-	Misc::LargeFile::Offset pointsOffset; // Offset of the node's points in the points file
+	IO::SeekableFile::Offset pointsOffset; // Offset of the node's points in the points file
 	
 	/* Constructors and destructors: */
-	OldLidarOctreeFileNode(Misc::LargeFile& file) // Reads the octree node from file
+	OldLidarOctreeFileNode(IO::SeekableFile& file) // Reads the octree node from file
 		{
 		file.read(childrenOffset);
 		file.read(detailSize);
@@ -739,11 +910,11 @@ struct OldLidarOctreeFileNode // Structure for a node in a LiDAR octree file
 	/* Methods: */
 	static size_t getSize(void) // Returns the file size of an octree node
 		{
-		return sizeof(Misc::LargeFile::Offset)+sizeof(Scalar)+sizeof(Misc::LargeFile::Offset)+sizeof(unsigned int);
+		return sizeof(IO::SeekableFile::Offset)+sizeof(Scalar)+sizeof(IO::SeekableFile::Offset)+sizeof(unsigned int);
 		}
 	};
 
-void readOctreeFileSubtree(PointAccumulator& pa,Misc::LargeFile& octFile,Misc::LargeFile& obinFile,const float colorMask[3])
+void readOctreeFileSubtree(PointAccumulator& pa,IO::SeekableFile& octFile,IO::SeekableFile& obinFile,const float colorMask[3])
 	{
 	/* Read the node's header from the octree file: */
 	OldLidarOctreeFileNode ofn(octFile);
@@ -751,17 +922,17 @@ void readOctreeFileSubtree(PointAccumulator& pa,Misc::LargeFile& octFile,Misc::L
 	if(ofn.childrenOffset!=0)
 		{
 		/* Recurse into the node's children: */
-		Misc::LargeFile::Offset childOffset=ofn.childrenOffset;
+		IO::SeekableFile::Offset childOffset=ofn.childrenOffset;
 		for(int childIndex=0;childIndex<8;++childIndex,childOffset+=OldLidarOctreeFileNode::getSize())
 			{
-			octFile.seekSet(childOffset);
+			octFile.setReadPosAbs(childOffset);
 			readOctreeFileSubtree(pa,octFile,obinFile,colorMask);
 			}
 		}
 	else if(ofn.numPoints>0)
 		{
 		/* Read the node's points from the octree point file: */
-		obinFile.seekSet(ofn.pointsOffset);
+		obinFile.setReadPosAbs(ofn.pointsOffset);
 		for(unsigned int i=0;i<ofn.numPoints;++i)
 			{
 			LidarPoint p;
@@ -777,16 +948,18 @@ void loadPointFileOctree(PointAccumulator& pa,const char* fileNameStem,const flo
 	/* Open the input octree structure and octree point files: */
 	char octFileName[1024];
 	snprintf(octFileName,sizeof(octFileName),"%s.oct",fileNameStem);
-	Misc::LargeFile octFile(octFileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoSeekableFile octFile(IO::openSeekableFile(octFileName));
+	octFile->setEndianness(IO::File::LittleEndian);
 	char obinFileName[1024];
 	snprintf(obinFileName,sizeof(obinFileName),"%s.obin",fileNameStem);
-	Misc::LargeFile obinFile(obinFileName,"rb",Misc::LargeFile::LittleEndian);
+	IO::AutoSeekableFile obinFile(IO::openSeekableFile(obinFileName));
+	obinFile->setEndianness(IO::File::LittleEndian);
 	
 	/* Read the octree structure file header: */
-	OldLidarOctreeFileHeader ofh(octFile);
+	OldLidarOctreeFileHeader ofh(*octFile);
 	
 	/* Read all original points from the octree: */
-	readOctreeFileSubtree(pa,octFile,obinFile,colorMask);
+	readOctreeFileSubtree(pa,*octFile,*obinFile,colorMask);
 	}
 
 /*****************************************************
@@ -853,6 +1026,8 @@ enum PointFileType // Enumerated type for point file formats
 	ASCIIRGB, // Generic ASCII format with RGB data
 	CSV, // Strict comma-separated values file with intensity data
 	CSVRGB, // Strict comma-separated values file with RGB data
+	BLOCKEDASCII, // Blocked ASCII format with intensity data
+	BLOCKEDASCIIRGB, // Blocked ASCII format with RGB data
 	IDL, // Redshift data file in IDL format
 	OCTREE, // Point octree file in old file format
 	LIDAR, // LiDAR file in new octree file format
@@ -924,6 +1099,7 @@ int main(int argc,char* argv[])
 	float colorMask[3]={1.0f,1.0f,1.0f};
 	int asciiColumnIndices[6];
 	double lasOffset[3]={0.0,0.0,0.0};
+	unsigned int lasClassMask=~0x0U;
 	int numHeaderLines=0;
 	bool havePoints=false;
 	
@@ -1041,6 +1217,27 @@ int main(int argc,char* argv[])
 						}
 					}
 				}
+			else if(strcasecmp(argv[i]+1,"lasClasses")==0)
+				{
+				/* Build a bit mask of LAS point classes to process: */
+				lasClassMask=0x0U;
+				while(i+1<argc)
+					{
+					/* Parse the next argument as an unsigned integer: */
+					unsigned int classBit=0U;
+					char* cPtr;
+					for(cPtr=argv[i+1];*cPtr>='0'&&*cPtr<='9';++cPtr)
+						classBit=classBit*10+(unsigned int)(*cPtr-'0');
+					
+					/* Bail out if it wasn't: */
+					if(*cPtr!='\0')
+						break;
+					
+					/* Add the class bit and go to the next argument: */
+					lasClassMask|=0x1U<<classBit;
+					++i;
+					}
+				}
 			else if(strcasecmp(argv[i]+1,"header")==0)
 				{
 				++i;
@@ -1091,6 +1288,28 @@ int main(int argc,char* argv[])
 				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
 					{
 					std::cerr<<"Invalid column indices for RGB CSV file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
+				}
+			else if(strcasecmp(argv[i]+1,"blockedascii")==0)
+				{
+				pointFileType=BLOCKEDASCII;
+				
+				/* Read the column index mask: */
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for blocked ASCII file"<<std::endl;
+					pointFileType==ILLEGAL;
+					}
+				}
+			else if(strcasecmp(argv[i]+1,"blockedasciirgb")==0)
+				{
+				pointFileType=BLOCKEDASCIIRGB;
+				
+				/* Read the column index mask: */
+				if(!readColumnIndexMask(argc,argv,i,asciiColumnIndices))
+					{
+					std::cerr<<"Invalid column indices for blocked RGB ASCII file"<<std::endl;
 					pointFileType==ILLEGAL;
 					}
 				}
@@ -1157,7 +1376,7 @@ int main(int argc,char* argv[])
 				
 				case LAS:
 					std::cout<<"Processing binary input file "<<argv[i]<<"..."<<std::flush;
-					loadPointFileLas(pa,argv[i],colorMask,lasOffset);
+					loadPointFileLas(pa,argv[i],lasClassMask,colorMask,lasOffset);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
@@ -1200,6 +1419,20 @@ int main(int argc,char* argv[])
 				case CSVRGB:
 					std::cout<<"Processing generic RGB CSV input file "<<argv[i]<<"..."<<std::flush;
 					loadPointFileGenericASCII(pa,argv[i],numHeaderLines,true,true,asciiColumnIndices,colorMask,lasOffset);
+					havePoints=true;
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case BLOCKEDASCII:
+					std::cout<<"Processing blocked ASCII input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileBlockedASCII(pa,argv[i],numHeaderLines,false,asciiColumnIndices,colorMask,lasOffset);
+					havePoints=true;
+					std::cout<<" done."<<std::endl;
+					break;
+				
+				case BLOCKEDASCIIRGB:
+					std::cout<<"Processing blocked RGB ASCII input file "<<argv[i]<<"..."<<std::flush;
+					loadPointFileBlockedASCII(pa,argv[i],numHeaderLines,true,asciiColumnIndices,colorMask,lasOffset);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
@@ -1275,8 +1508,9 @@ int main(int argc,char* argv[])
 		/* Write the point offsets to an offset file: */
 		std::string offsetFileName=outputFileName;
 		offsetFileName.append("/Offset");
-		Misc::File offsetFile(offsetFileName.c_str(),"wt",Misc::File::LittleEndian);
-		offsetFile.write(lasOffset,3);
+		IO::AutoFile offsetFile(IO::openFile(offsetFileName.c_str(),IO::File::WriteOnly));
+		offsetFile->setEndianness(IO::File::LittleEndian);
+		offsetFile->write(lasOffset,3);
 		}
 	
 	std::cout<<"Time to load input data: "<<loadTimer.getTime()<<"s, time to create octree: "<<createTimer.getTime()<<"s, time to write final octree files: "<<writeTimer.getTime()<<"s"<<std::endl;

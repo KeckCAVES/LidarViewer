@@ -34,6 +34,11 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "LidarFile.h"
 #include "LidarProcessOctree.h"
 
+/* Forward declarations: */
+namespace Misc {
+class File;
+}
+
 class NormalCalculator
 	{
 	/* Embedded classes: */
@@ -102,6 +107,11 @@ class NodeNormalCalculator
 	Vector* childNormalBuffers[8]; // Array of normal arrays for a node's children during subsampling
 	LidarFile::Offset normalDataSize; // Size of each record in the normal file
 	LidarFile normalFile; // The file to which to write the normal vector data
+	bool saveOutliers; // Flag whether to save points with undefined normal vectors to an outlier file
+	Threads::Mutex outlierMutex; // Mutex serializing access to the outlier array
+	size_t numOutliers; // Number of outliers encountered in the current node
+	Point* outliers; // Array of outlier positions
+	Misc::File* outlierFile; // If outliers are to be saved, pointer to the file to which to write them
 	unsigned int numThreads; // Number of processing threads
 	bool shutdownThreads; // Flag to shut down threads at the end
 	Threads::Thread* calcThreads; // Array of threads to calculate normal vectors from point neighborhoods
@@ -122,6 +132,7 @@ class NodeNormalCalculator
 	~NodeNormalCalculator(void);
 	
 	/* Methods: */
+	void saveOutlierPoints(const char* outlierFileName); // Saves outlier points to the given file
 	void operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel);
 	};
 

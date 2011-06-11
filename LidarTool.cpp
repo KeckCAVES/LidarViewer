@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarTool - Vrui tool class to position a virtual input device at the
 intersection of a ray and a LiDAR octree.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2010 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,6 +26,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Comm/MulticastPipe.h>
 #include <Geometry/Ray.h>
 #include <Geometry/OrthogonalTransformation.h>
+#include <GL/gl.h>
+#include <GL/GLGeometryWrappers.h>
 #include <Vrui/InputDevice.h>
 #include <Vrui/ToolManager.h>
 #include <Vrui/InputGraphManager.h>
@@ -33,14 +35,14 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "LidarTypes.h"
 #include "LidarOctree.h"
+#include "LidarViewer.h"
 
 /*********************************
 Methods of class LidarToolFactory:
 *********************************/
 
-LidarToolFactory::LidarToolFactory(Vrui::ToolManager& toolManager,const LidarOctree* sOctree)
-	:Vrui::ToolFactory("LidarTool",toolManager),
-	 octree(sOctree)
+LidarToolFactory::LidarToolFactory(Vrui::ToolManager& toolManager)
+	:Vrui::ToolFactory("LidarTool",toolManager)
 	{
 	/* Insert class into class hierarchy: */
 	Vrui::TransformToolFactory* transformToolFactory=dynamic_cast<Vrui::TransformToolFactory*>(toolManager.loadClass("TransformTool"));
@@ -48,9 +50,8 @@ LidarToolFactory::LidarToolFactory(Vrui::ToolManager& toolManager,const LidarOct
 	addParentClass(transformToolFactory);
 	
 	/* Initialize tool layout: */
-	layout.setNumDevices(1);
-	layout.setNumButtons(0,transformToolFactory->getNumButtons());
-	layout.setNumValuators(0,transformToolFactory->getNumValuators());
+	layout.setNumButtons(0,true);
+	layout.setNumValuators(0,true);
 	
 	/* Set the custom tool class' factory pointer: */
 	LidarTool::factory=this;
@@ -97,6 +98,11 @@ Methods of class LidarTool:
 LidarTool::LidarTool(const Vrui::ToolFactory* factory,const Vrui::ToolInputAssignment& inputAssignment)
 	:Vrui::TransformTool(factory,inputAssignment)
 	{
+	/* Set the source device: */
+	if(input.getNumButtonSlots()>0)
+		sourceDevice=getButtonDevice(0);
+	else
+		sourceDevice=getValuatorDevice(0);
 	}
 
 void LidarTool::initialize(void)
@@ -115,55 +121,69 @@ const Vrui::ToolFactory* LidarTool::getFactory(void) const
 
 void LidarTool::frame(void)
 	{
-	/* Get pointer to input device: */
-	Vrui::InputDevice* iDevice=input.getDevice(0);
+	/* Calculate ray equation in navigation coordinates: */
+	LidarOctree::Ray deviceRay(sourceDevice->getPosition(),sourceDevice->getRayDirection());
+	LidarOctree::Ray modelRay=deviceRay;
+	modelRay.transform(Vrui::getInverseNavigationTransformation());
 	
-	if(transformEnabled)
+	/* Intersect the ray with the LiDAR data set: */
+	Scalar rayParameter;
+	if(Vrui::isMaster())
 		{
-		/* Calculate ray equation in navigation coordinates: */
-		LidarOctree::Ray deviceRay(iDevice->getPosition(),iDevice->getRayDirection());
-		LidarOctree::Ray modelRay=deviceRay;
-		modelRay.transform(Vrui::getInverseNavigationTransformation());
-		modelRay.normalizeDirection();
-		
-		/* Intersect the ray with the LiDAR data set: */
-		Scalar lambda;
-		if(Vrui::isMaster())
+		/* Calculate the intersection: */
+		rayParameter=Scalar(-1);
+		LidarOctree::ConeIntersection cone(modelRay,Vrui::getRayPickCosine());
+		for(int i=0;i<application->numOctrees;++i)
 			{
-			/* Calculate the intersection: */
-			lambda=factory->octree->intersectRay(modelRay,Scalar(0.002));
-			
-			if(Vrui::getMainPipe()!=0)
+			application->octrees[i]->intersectCone(cone);
+			if(cone.isValid())
 				{
-				/* Send the intersection to the slaves: */
-				Vrui::getMainPipe()->write<Scalar>(lambda);
-				// Vrui::getMainPipe()->finishMessage();
+				rayParameter=cone.getParameter();
+				cone.testLambda2=cone.testLambdaMin;
 				}
 			}
-		else
-			{
-			/* Receive the intersection from the master: */
-			Vrui::getMainPipe()->read<Scalar>(lambda);
-			}
 		
-		if(lambda>=Scalar(0))
+		if(Vrui::getMainPipe()!=0)
 			{
-			/* Set the device position to the intersection point: */
-			Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(Vrui::getNavigationTransformation().transform(modelRay(lambda)));
-			transformedDevice->setTransformation(ts);
+			/* Send the intersection to the slaves: */
+			Vrui::getMainPipe()->write<Scalar>(rayParameter);
+			// Vrui::getMainPipe()->finishMessage();
 			}
-		else
-			{
-			/* Move the device in the plane it currently inhabits: */
-			lambda=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-iDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
-			Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(lambda));
-			transformedDevice->setTransformation(ts);
-			}
-		transformedDevice->setDeviceRayDirection(deviceRay.getDirection());
 		}
 	else
 		{
-		transformedDevice->setTransformation(iDevice->getTransformation());
-		transformedDevice->setDeviceRayDirection(iDevice->getDeviceRayDirection());
+		/* Receive the intersection from the master: */
+		Vrui::getMainPipe()->read<Scalar>(rayParameter);
 		}
+	
+	if(rayParameter>=Scalar(0))
+		{
+		/* Set the device position to the intersection point: */
+		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(Vrui::getNavigationTransformation().transform(modelRay(rayParameter)));
+		transformedDevice->setTransformation(ts);
+		}
+	else
+		{
+		/* Move the device in the plane it currently inhabits: */
+		rayParameter=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-sourceDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
+		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(rayParameter));
+		transformedDevice->setTransformation(ts);
+		}
+	transformedDevice->setDeviceRayDirection(deviceRay.getDirection());
+	}
+
+void LidarTool::display(GLContextData& contextData) const
+	{
+	/* Draw a line from the source device's position to the transformed device's position: */
+	glPushAttrib(GL_ENABLE_BIT|GL_LINE_BIT);
+	glDisable(GL_LIGHTING);
+	glLineWidth(1.0f);
+	
+	glColor3f(0.0f,1.0f,0.0f);
+	glBegin(GL_LINES);
+	glVertex(sourceDevice->getPosition());
+	glVertex(transformedDevice->getPosition());
+	glEnd();
+	
+	glPopAttrib();
 	}

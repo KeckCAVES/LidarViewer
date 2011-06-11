@@ -23,7 +23,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
+#include <IO/File.h>
 #include <Comm/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Geometry/Vector.h>
@@ -176,7 +176,7 @@ PlanePrimitive::PlanePrimitive(Comm::MulticastPipe* pipe)
 	numY=pipe->read<int>();
 	}
 
-PlanePrimitive::PlanePrimitive(Misc::File& file,const Primitive::Vector& translation)
+PlanePrimitive::PlanePrimitive(IO::File& file,const Primitive::Vector& translation)
 	{
 	/* Read the number of points and the RMS residual: */
 	numPoints=file.read<unsigned int>();
@@ -285,7 +285,7 @@ void PlanePrimitive::glRenderAction(GLContextData& contextData) const
 	glPopAttrib();
 	}
 
-void PlanePrimitive::write(Misc::File& file,const Primitive::Vector& translation) const
+void PlanePrimitive::write(IO::File& file,const Primitive::Vector& translation) const
 	{
 	/* Write the number of points and the RMS residual: */
 	file.write<unsigned int>((unsigned int)(numPoints));

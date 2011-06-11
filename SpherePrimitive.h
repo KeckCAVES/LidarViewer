@@ -33,6 +33,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 namespace Comm {
 class MulticastPipe;
 }
+class LidarOctree;
 
 class SpherePrimitive:public PointPrimitive,public GLObject
 	{
@@ -57,13 +58,13 @@ class SpherePrimitive:public PointPrimitive,public GLObject
 	public:
 	SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates sphere by processing selected points from the given octree; writes result to given pipe if !=0
 	SpherePrimitive(Comm::MulticastPipe* pipe); // Creates sphere by reading sphere data from given pipe
-	SpherePrimitive(Misc::File& file,const Vector& translation); // Reads a sphere primitive from a binary file
+	SpherePrimitive(IO::File& file,const Vector& translation); // Reads a sphere primitive from a binary file
 	
 	/* Methods: */
 	virtual Scalar pick(const Point& pickPoint,Scalar maxPickDistance) const;
 	virtual void initContext(GLContextData& contextData) const;
 	virtual void glRenderAction(GLContextData& contextData) const;
-	virtual void write(Misc::File& file,const Vector& translation) const;
+	virtual void write(IO::File& file,const Vector& translation) const;
 	};
 
 #endif

@@ -25,6 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iomanip>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
+#include <Misc/File.h>
 #include <Math/Math.h>
 
 #include "NormalCalculator.h"
@@ -293,9 +294,9 @@ class NormalAverager // Class to average normal vectors of collapsed points duri
 
 }
 
-/*********************************
-Methods of class NormalCalculator:
-*********************************/
+/*************************************
+Methods of class NodeNormalCalculator:
+*************************************/
 
 void* NodeNormalCalculator::calcThreadMethod(unsigned int threadIndex)
 	{
@@ -329,6 +330,13 @@ void* NodeNormalCalculator::calcThreadMethod(unsigned int threadIndex)
 				{
 				/* Solitary point; assign dummy normal vector: */
 				normalBuffer[i]=Vector::zero;
+				
+				if(saveOutliers)
+					{
+					Threads::Mutex::Lock outlierLock(outlierMutex);
+					outliers[numOutliers]=(*currentNode)[i];
+					++numOutliers;
+					}
 				}
 			}
 		
@@ -406,6 +414,7 @@ NodeNormalCalculator::NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadi
 	 normalBuffer(new Vector[lpo.getMaxNumPointsPerNode()]),
 	 normalDataSize(sizeof(Scalar)*3),
 	 normalFile(normalFileName,"w+b",LidarFile::LittleEndian),
+	 saveOutliers(false),numOutliers(0),outliers(0),outlierFile(0),
 	 numThreads(sNumThreads),shutdownThreads(false),
 	 calcThreads(new Threads::Thread[numThreads]),calcBarrier(numThreads+1),
 	 subsampleThreads(new Threads::Thread[numThreads]),subsampleBarrier(numThreads+1),
@@ -446,6 +455,17 @@ NodeNormalCalculator::~NodeNormalCalculator(void)
 	delete[] normalBuffer;
 	for(int i=0;i<8;++i)
 		delete[] childNormalBuffers[i];
+	
+	delete[] outliers;
+	delete outlierFile;
+	}
+
+void NodeNormalCalculator::saveOutlierPoints(const char* outlierFileName)
+	{
+	saveOutliers=true;
+	numOutliers=0;
+	outliers=new Point[lpo.getMaxNumPointsPerNode()];
+	outlierFile=new Misc::File(outlierFileName,"wt");
 	}
 
 void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
@@ -460,6 +480,15 @@ void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned in
 		
 		/* Wait for their completion: */
 		calcBarrier.synchronize();
+		
+		if(saveOutliers)
+			{
+			/* Write all outlier points to the file: */
+			for(size_t i=0;i<numOutliers;++i)
+				fprintf(outlierFile->getFilePtr(),"%.6f %.6f %.6f\n",outliers[i][0],outliers[i][1],outliers[i][2]);
+			
+			numOutliers=0;
+			}
 		}
 	else
 		{

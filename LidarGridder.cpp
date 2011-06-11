@@ -23,6 +23,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <string>
 #include <stdexcept>
 #include <iostream>
@@ -273,6 +275,7 @@ class LidarGridder:public Vrui::Application,public GLObject
 	/* Elements: */
 	LidarProcessOctree* lpo; // The out-of-core LiDAR octree
 	Cube lpoDomain; // Domain of the LiDAR octree
+	double lpoOffset[3]; // Offset value from octree coordinates to data coordinates
 	Geometry::Box<double,2> gridBox; // Box limiting the extent of the extracted DEM
 	double gridCellSize[2]; // Cell size for the extracted DEM
 	int numLobes; // Number of lobes in the Lanczos reconstruction filter
@@ -280,6 +283,8 @@ class LidarGridder:public Vrui::Application,public GLObject
 	
 	/* Private methods: */
 	void createDem(void);
+	void writeBILFile(const char* imageFileName) const;
+	void writeArcInfoBinaryGridFile(const char* directoryName) const;
 	
 	/* Constructors and destructors: */
 	public:
@@ -409,6 +414,233 @@ void LidarGridder::createDem(void)
 	std::cout<<"Grid generation time: "<<timer.getTime()*1000.0<<" ms"<<std::endl;
 	}
 
+void LidarGridder::writeBILFile(const char* imageFileName) const
+	{
+	/* Calculate the exact size of the DEM grid: */
+	double gridOrigin[2];
+	int gridSize[2];
+	for(int i=0;i<2;++i)
+		{
+		gridSize[i]=int(Math::ceil((gridBox.max[i]-gridBox.min[i])/gridCellSize[i]))+1;
+		double overshoot=double(gridSize[i]-1)*gridCellSize[i]-(gridBox.max[i]-gridBox.min[i]);
+		gridOrigin[i]=gridBox.min[i]-0.5*overshoot;
+		}
+	
+	{
+	/* Remove the file name extension from the image file name: */
+	const char* extPtr=0;
+	const char* ifnPtr;
+	for(ifnPtr=imageFileName;*ifnPtr!='\0';++ifnPtr)
+		if(*ifnPtr=='.')
+			extPtr=ifnPtr;
+	if(extPtr==0)
+		extPtr=ifnPtr;
+	
+	/* Create the header file: */
+	std::string headerFileName(imageFileName,extPtr);
+	headerFileName.append(".hdr");
+	Misc::File headerFile(headerFileName.c_str(),"wt");
+	fprintf(headerFile.getFilePtr(),"BYTEORDER I\r\n");
+	fprintf(headerFile.getFilePtr(),"LAYOUT BIL\r\n");
+	fprintf(headerFile.getFilePtr(),"NBANDS 1\r\n");
+	fprintf(headerFile.getFilePtr(),"NBITS 32\r\n");
+	fprintf(headerFile.getFilePtr(),"NCOLS %d\r\n",dem.getSize(0));
+	fprintf(headerFile.getFilePtr(),"NROWS %d\r\n",dem.getSize(1));
+	fprintf(headerFile.getFilePtr(),"BANDROWBYTES %u\r\n",(unsigned int)(dem.getSize(0)*sizeof(float)));
+	fprintf(headerFile.getFilePtr(),"TOTALROWBYTES %u\r\n",(unsigned int)(dem.getSize(0)*sizeof(float)));
+	fprintf(headerFile.getFilePtr(),"ULXMAP %f\r\n",gridOrigin[0]);
+	fprintf(headerFile.getFilePtr(),"ULXYAP %f\r\n",gridOrigin[1]+double(gridSize[1]-1)*gridCellSize[1]);
+	fprintf(headerFile.getFilePtr(),"XDIM %f\r\n",gridCellSize[0]);
+	fprintf(headerFile.getFilePtr(),"YDIM %f\r\n",gridCellSize[1]);
+	}
+	
+	/* Create the image file: */
+	Misc::File imageFile(imageFileName,"wb",Misc::File::LittleEndian);
+	for(int y=0;y<dem.getSize(1);++y)
+		for(int x=0;x<dem.getSize(0);++x)
+			imageFile.write<unsigned int>((unsigned int)Math::floor((dem(x,dem.getSize(1)-1-y).position[2]-lpoOffset[2])*1000.0f+0.5f));
+	}
+
+void LidarGridder::writeArcInfoBinaryGridFile(const char* directoryName) const
+	{
+	/* Calculate the exact size of the DEM grid: */
+	double gridOrigin[2];
+	int gridSize[2];
+	for(int i=0;i<2;++i)
+		{
+		gridSize[i]=int(Math::ceil((gridBox.max[i]-gridBox.min[i])/gridCellSize[i]))+1;
+		double overshoot=double(gridSize[i]-1)*gridCellSize[i]-(gridBox.max[i]-gridBox.min[i]);
+		gridOrigin[i]=gridBox.min[i]-0.5*overshoot;
+		}
+	
+	/* Calculate the DEM's tile layout: */
+	int tileSize[2]={256,4};
+	int numTiles[2];
+	for(int i=0;i<2;++i)
+		numTiles[i]=(gridSize[i]+tileSize[i]-1)/tileSize[i];
+	unsigned int totalNumTiles=(unsigned int)numTiles[0]*(unsigned int)numTiles[1];
+	unsigned int fileTileSize=(unsigned int)tileSize[0]*(unsigned int)tileSize[1]*sizeof(float);
+	
+	{
+	/* Create the DEM's base directory: */
+	if(mkdir(directoryName,0777)<0)
+		Misc::throwStdErr("LidarGridder::writeArcInfoBinaryGridFile: Could not create DEM directory %s",directoryName);
+	}
+	
+	{
+	/* Write the DEM's header file: */
+	std::string headerFileName(directoryName);
+	headerFileName.append("/hdr.adf");
+	Misc::File headerFile(headerFileName.c_str(),"wb",Misc::File::BigEndian);
+	
+	/* Write header file magic number: */
+	unsigned int headerFileMagic[2]={0x47524944U,0x312e3200U};
+	headerFile.write<unsigned int>(headerFileMagic,2);
+	
+	/* Write first batch of dummy data: */
+	unsigned int dummy1[2]={0x1ce91200U,0xffffffffU};
+	headerFile.write<unsigned int>(dummy1,sizeof(dummy1)/sizeof(dummy1[0]));
+	
+	/* Write DEM pixel type (float): */
+	headerFile.write<int>(2);
+	
+	/* Write second batch of dummy data: */
+	unsigned int dummy2[59]=
+		{
+		0x00000000U,0x00000000U,0x3f800000U,0x86e61200U,
+		0x01001000U,0x22000000U,0x02000000U,0x44004600U,
+		0x00dcfd7fU,0x44e91200U,0xe0e51200U,0x00dcfd7fU,
+		0x00000000U,0x44000802U,0x45000000U,0xd6149143U,
+		0x44000000U,0x00000000U,0x03000000U,0xbce61200U,
+		0x00000000U,0x00001401U,0x88e61200U,0x45000043U,
+		0x00000000U,0x00000000U,0xbae61200U,0x3504917cU,
+		0x18e61200U,0x00001400U,0x2202917cU,0x05000000U,
+		0x78071400U,0x00001400U,0x38791400U,0xf0e51200U,
+		0x14e61200U,0x34e81200U,0x20e9907cU,0x2802917cU,
+		0xffffffffU,0x2202917cU,0x9b01917cU,0xdb01917cU,
+		0xe4cf1400U,0xd0cf1400U,0x00000000U,0x02000000U,
+		0x26000000U,0x20d31c60U,0x4d700760U,0x00000000U,
+		0x08000a00U,0x7c40917cU,0x1a020000U,0x44e91200U,
+		0x00000000U,0x10001200U,0xbce61200U
+		};
+	headerFile.write<unsigned int>(dummy2,sizeof(dummy2)/sizeof(dummy2[0]));
+	
+	/* Write DEM's pixel size: */
+	headerFile.write<double>(gridCellSize,2);
+	
+	/* Calculate and write reference values: */
+	double ref[2];
+	ref[0]=gridOrigin[0]-lpoOffset[0]-0.5-(double(numTiles[0])*double(tileSize[0])*gridCellSize[0])/2.0;
+	ref[1]=gridOrigin[1]-lpoOffset[1]-0.5-(3.0*double(numTiles[1])*double(tileSize[1])*gridCellSize[1])/2.0;
+	headerFile.write<double>(ref,2);
+	
+	/* Write the DEM's tile layout: */
+	headerFile.write<int>(numTiles,2);
+	headerFile.write<int>(tileSize[0]);
+	headerFile.write<int>(1);
+	headerFile.write<int>(tileSize[1]);
+	}
+	
+	{
+	/* Write the DEM's boundary file: */
+	std::string boundaryFileName(directoryName);
+	boundaryFileName.append("/dblbnd.adf");
+	Misc::File boundaryFile(boundaryFileName.c_str(),"wb",Misc::File::BigEndian);
+	
+	/* Write the DEM's boundaries: */
+	boundaryFile.write<double>(gridOrigin[0]-lpoOffset[0]-0.5);
+	boundaryFile.write<double>(gridOrigin[1]-lpoOffset[1]-0.5);
+	boundaryFile.write<double>(gridOrigin[0]+double(gridSize[0])*gridCellSize[0]-lpoOffset[0]-0.5);
+	boundaryFile.write<double>(gridOrigin[1]+double(gridSize[1])*gridCellSize[1]-lpoOffset[1]-0.5);
+	}
+	
+	{
+	/* Write the DEM's tile index file: */
+	std::string tileIndexFileName(directoryName);
+	tileIndexFileName.append("/w001001x.adf");
+	Misc::File tileIndexFile(tileIndexFileName.c_str(),"wb",Misc::File::BigEndian);
+	
+	/* Write tile index file magic number: */
+	unsigned int tileIndexFileMagic[2]={0x0000270aU,0xfffffc14U};
+	tileIndexFile.write<unsigned int>(tileIndexFileMagic,2);
+	
+	/* Write first batch of dummy data: */
+	unsigned int dummy1[4]={0U,0U,0U,0U};
+	tileIndexFile.write<unsigned int>(dummy1,sizeof(dummy1)/sizeof(dummy1[0]));
+	
+	/* Write the tile index file size: */
+	tileIndexFile.write<unsigned int>((100U+totalNumTiles*2U*sizeof(unsigned int))/2U);
+	
+	/* Write second batch of dummy data: */
+	unsigned int dummy2[18];
+	for(int i=0;i<sizeof(dummy2)/sizeof(dummy2[0]);++i)
+		dummy2[i]=0U;
+	tileIndexFile.write<unsigned int>(dummy2,sizeof(dummy2)/sizeof(dummy2[0]));
+	
+	/* Write tile offsets and sizes: */
+	unsigned int fileTileOffset=100U;
+	for(unsigned int i=0;i<totalNumTiles;++i)
+		{
+		tileIndexFile.write<unsigned int>(fileTileOffset/2U);
+		tileIndexFile.write<unsigned int>(fileTileSize/2U);
+		fileTileOffset+=fileTileSize;
+		}
+	}
+	
+	{
+	/* Write the tile data file: */
+	std::string tileFileName(directoryName);
+	tileFileName.append("/w001001.adf");
+	Misc::File tileFile(tileFileName.c_str(),"wb",Misc::File::BigEndian);
+	
+	/* Write tile file magic number: */
+	unsigned int tileFileMagic[2]={0x0000270aU,0xfffffc14U};
+	tileFile.write<unsigned int>(tileFileMagic,2);
+	
+	/* Write first batch of dummy data: */
+	unsigned int dummy1[4]={0U,0U,0U,0U};
+	tileFile.write<unsigned int>(dummy1,sizeof(dummy1)/sizeof(dummy1[0]));
+	
+	/* Write the tile file size: */
+	tileFile.write<unsigned int>((100U+totalNumTiles*(sizeof(short)+fileTileSize))/2U);
+	
+	/* Write second batch of dummy data: */
+	unsigned int dummy2[18];
+	for(int i=0;i<sizeof(dummy2)/sizeof(dummy2[0]);++i)
+		dummy2[i]=0U;
+	tileFile.write<unsigned int>(dummy2,sizeof(dummy2)/sizeof(dummy2[0]));
+	
+	/* Write all tiles: */
+	float* tile=new float[tileSize[0]*tileSize[1]];
+	for(int tileY=0;tileY<numTiles[1];++tileY)
+		for(int tileX=0;tileX<numTiles[0];++tileX)
+			{
+			/* Calculate the tile's position: */
+			int tileMin[2],tileMax[2];
+			tileMin[0]=tileX*tileSize[0];
+			tileMin[1]=tileY*tileSize[1];
+			tileMax[0]=(tileX+1)*tileSize[0];
+			tileMax[1]=(tileY+1)*tileSize[1];
+			
+			/* Clamp the tile against the DEM: */
+			if(tileMax[0]>dem.getSize(0))
+				tileMax[0]=dem.getSize(0);
+			if(tileMax[1]>dem.getSize(1))
+				tileMax[1]=dem.getSize(1);
+			
+			/* Copy tile data: */
+			for(int y=tileMin[1];y<tileMax[1];++y)
+				for(int x=tileMin[0];x<tileMax[0];++x)
+					tile[(y-tileMin[1])*tileSize[0]+(x-tileMin[0])]=float(dem(x,dem.getSize(1)-1-y).position[2]-lpoOffset[2]);
+			
+			/* Write the tile: */
+			tileFile.write<short>(fileTileSize/2U);
+			tileFile.write<float>(tile,tileSize[0]*tileSize[1]);
+			}
+	delete[] tile;
+	}
+	}
+
 LidarGridder::LidarGridder(int& argc,char**& argv,char**& appDefaults)
 	:Vrui::Application(argc,argv,appDefaults),
 	 lpo(0)
@@ -475,6 +707,33 @@ LidarGridder::LidarGridder(int& argc,char**& argv,char**& appDefaults)
 	lpo=new LidarProcessOctree(lidarFileName,cacheSize*1024*1024);
 	lpoDomain=lpo->getDomain();
 	
+	{
+	/* Check if the LiDAR data set has an offset file: */
+	std::string offsetFileName(lidarFileName);
+	offsetFileName.append("/Offset");
+	try
+		{
+		/* Read the offset values: */
+		Misc::File offsetFile(offsetFileName.c_str(),"rb",Misc::File::LittleEndian);
+		offsetFile.read<double>(lpoOffset,3);
+		
+		/* Convert the given grid box to octree coordinates: */
+		for(int i=0;i<2;++i)
+			{
+			if(gridBox.min[i]!=Geometry::Box<double,2>::full.min[i])
+				gridBox.min[i]+=lpoOffset[i];
+			if(gridBox.max[i]!=Geometry::Box<double,2>::full.max[i])
+				gridBox.max[i]+=lpoOffset[i];
+			}
+		}
+	catch(Misc::File::OpenError err)
+		{
+		/* Set offset to zero: */
+		for(int i=0;i<3;++i)
+			lpoOffset[i]=0.0;
+		}
+	}
+	
 	/* Limit the grid box to the LiDAR data set's domain: */
 	for(int i=0;i<2;++i)
 		{
@@ -489,6 +748,7 @@ LidarGridder::LidarGridder(int& argc,char**& argv,char**& appDefaults)
 	
 	if(gridFileName!=0)
 		{
+		#if 0
 		/* Save the dem as a grid file: */
 		Misc::File gridFile(gridFileName,"wb",Misc::File::LittleEndian);
 		gridFile.write<int>(dem.getSize(0));
@@ -500,6 +760,13 @@ LidarGridder::LidarGridder(int& argc,char**& argv,char**& appDefaults)
 		for(int y=0;y<dem.getSize(1);++y)
 			for(int x=0;x<dem.getSize(0);++x)
 				gridFile.write<float>(dem(x,y).position[2]);
+		#elif 0
+		/* Save the dem as an Arc/Info binary grid file: */
+		writeArcInfoBinaryGridFile(gridFileName);
+		#else
+		/* Save the dem as a BIL file: */
+		writeBILFile(gridFileName);
+		#endif
 		}
 	
 	/* Initialize the navigation transformation: */

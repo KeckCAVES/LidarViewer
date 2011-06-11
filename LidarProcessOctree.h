@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,10 +26,11 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #define OPTIMIZED_TRAVERSAL 1
 #define ALLOW_THREADING 1
 
-#include <Math/Math.h>
 #if ALLOW_THREADING
 #include <Threads/Mutex.h>
 #endif
+#include <Math/Math.h>
+#include <Geometry/Vector.h>
 
 #include "LidarTypes.h"
 #include "Cube.h"
@@ -113,6 +114,192 @@ class LidarProcessOctree
 			}
 		};
 	
+	class NodeIterator // Class to iterate through all nodes in an octree
+		{
+		friend class LidarProcessOctree;
+		
+		/* Elements: */
+		private:
+		LidarProcessOctree* lpo; // Pointer to octree containing the currently visited node
+		Node* node; // Pointer to currently visited node
+		
+		/* Constructors and destructors: */
+		public:
+		NodeIterator(void) // Creates invalid iterator
+			:lpo(0),node(0)
+			{
+			}
+		private:
+		NodeIterator(LidarProcessOctree* sLpo,Node* sNode) // Creates iterator pointing to given node in given octree
+			:lpo(sLpo),node(sNode)
+			{
+			/* Enter the node: */
+			LidarProcessOctree::enterNodeRec(node);
+			}
+		public:
+		NodeIterator(const NodeIterator& source) // Copy constructor
+			:lpo(source.lpo),node(source.node)
+			{
+			/* Enter the node: */
+			LidarProcessOctree::enterNodeRec(node);
+			}
+		NodeIterator& operator=(const NodeIterator& source) // Assignment operator
+			{
+			/* Leave the current node: */
+			LidarProcessOctree::leaveNodeRec(node);
+			
+			/* Enter the new node: */
+			lpo=source.lpo;
+			node=source.node;
+			LidarProcessOctree::enterNodeRec(node);
+			
+			return *this;
+			}
+		~NodeIterator(void) // Destructor
+			{
+			/* Leave the current node: */
+			LidarProcessOctree::leaveNodeRec(node);
+			}
+		
+		/* Methods: */
+		bool isValid(void) const // Returns true if the iterator point to a valid node
+			{
+			return node!=0;
+			}
+		Node* operator->(void) const // Returns the currently visited node
+			{
+			return node;
+			}
+		Node& operator*(void) const // Returns the currently visited node
+			{
+			return *node;
+			}
+		bool operator==(const NodeIterator& other) const // Equality operator
+			{
+			return node==other.node;
+			}
+		bool operator!=(const NodeIterator& other) const // Inequality operator
+			{
+			return node!=other.node;
+			}
+		NodeIterator& operator++(void) // Goes to the next node
+			{
+			LidarProcessOctree::leaveNodeRec(node);
+			if(node!=0)
+				node=lpo->nextNodePrefix(node);
+			LidarProcessOctree::enterNodeRec(node);
+			return *this;
+			}
+		NodeIterator operator++(int) // Ditto, with post-increment
+			{
+			NodeIterator result(lpo,node);
+			LidarProcessOctree::leaveNodeRec(node);
+			if(node!=0)
+				node=lpo->nextNodePrefix(node);
+			LidarProcessOctree::enterNodeRec(node);
+			return result;
+			}
+		};
+	
+	class PointIterator:public NodeIterator // Class to iterate through leaf points
+		{
+		/* Elements: */
+		private:
+		unsigned int pointIndex; // Index of current point inside its node's point array
+		
+		/* Private methods: */
+		void findNextLeafNode(void) // Iterates through nodes until the next non-empty leaf node is found
+			{
+			/* Increment node iterator until it hits a leaf node: */
+			while(isValid()&&(!NodeIterator::operator*().isLeaf()||NodeIterator::operator*().getNumPoints()==0))
+				NodeIterator::operator++();
+			}
+		
+		/* Constructors and destructors: */
+		public:
+		PointIterator(void) // Creates invalid iterator
+			:NodeIterator(),pointIndex(0)
+			{
+			}
+		PointIterator(const NodeIterator& nodeIt) // Creates point iterator from node iterator
+			:NodeIterator(nodeIt),pointIndex(0)
+			{
+			findNextLeafNode();
+			}
+		PointIterator(const PointIterator& source) // Copy constructor
+			:NodeIterator(source),pointIndex(source.pointIndex)
+			{
+			}
+		PointIterator& operator=(const PointIterator& source) // Assignment operator
+			{
+			NodeIterator::operator=(source);
+			pointIndex=source.pointIndex;
+			return *this;
+			}
+		
+		/* Methods: */
+		const LidarPoint* operator->(void) const // Returns the currently pointed-to point
+			{
+			return NodeIterator::operator*().getPoints()+pointIndex;
+			}
+		const LidarPoint& operator*(void) const // Returns the currently pointed-to point
+			{
+			return NodeIterator::operator*()[pointIndex];
+			}
+		bool operator==(const NodeIterator& other) const // Equality operator with node iterator
+			{
+			return pointIndex==0&&NodeIterator::operator==(other);
+			}
+		bool operator!=(const NodeIterator& other) const // Inequality operator with node iterator
+			{
+			return pointIndex!=0||NodeIterator::operator!=(other);
+			}
+		bool operator==(const PointIterator& other) const // Equality operator
+			{
+			return pointIndex==other.pointIndex&&NodeIterator::operator==(other);
+			}
+		bool operator!=(const PointIterator& other) const // Inequality operator
+			{
+			return pointIndex!=other.pointIndex||NodeIterator::operator!=(other);
+			}
+		PointIterator& operator++(void) // Goes to the next point
+			{
+			/* Go to the next point: */
+			++pointIndex;
+			
+			/* Go to next leaf node if done with current node: */
+			if(pointIndex>=NodeIterator::operator*().getNumPoints())
+				{
+				NodeIterator::operator++();
+				findNextLeafNode();
+				pointIndex=0;
+				}
+			
+			return *this;
+			}
+		PointIterator operator++(int) // Ditto, with post-increment
+			{
+			PointIterator result(*this);
+			
+			/* Go to the next point: */
+			++pointIndex;
+			
+			/* Go to next leaf node if done with current node: */
+			if(pointIndex>=NodeIterator::operator*().getNumPoints())
+				{
+				NodeIterator::operator++();
+				findNextLeafNode();
+				pointIndex=0;
+				}
+			
+			return result;
+			}
+		};
+	
+	typedef Geometry::Vector<double,3> OffsetVector; // Type for offset vectors between file coordinates and map coordinates
+	
+	friend class NodeIterator;
+	
 	/* Elements: */
 	private:
 	#if ALLOW_THREADING
@@ -123,6 +310,7 @@ class LidarProcessOctree
 	LidarFile::Offset pointsRecordSize; // Record size of points file
 	size_t numNodes; // Total number of nodes in the octree
 	unsigned int maxNumPointsPerNode; // Maximum number of points per node
+	OffsetVector offset; // Offset that needs to be added to LiDAR points to transform them back to source coordinates
 	Node root; // Root node
 	unsigned int cacheSize; // Maximum number of nodes that can be held in memory
 	unsigned int numCachedNodes; // Number of nodes currently held in memory
@@ -148,6 +336,9 @@ class LidarProcessOctree
 	static void processPointsDirectedKdtree(const LidarPoint* points,unsigned int left,unsigned int right,unsigned int splitDimension,DirectedProcessFunctorParam& processFunctor); // Recursive directed point processor for intra-node kd-tree
 	template <class DirectedProcessFunctorParam>
 	void processPointsDirectedOctree(Node& node,DirectedProcessFunctorParam& processFunctor); // Recursive directed point processor for octree
+	static void enterNodeRec(Node* node); // Locks a node and all its ancestors
+	static void leaveNodeRec(Node* node); // Unlocks a node and all its ancestors
+	Node* nextNodePrefix(Node* node); // Returns the next node after the given one in prefix traversal order
 	
 	/* Constructors and destructors: */
 	public:
@@ -162,6 +353,10 @@ class LidarProcessOctree
 	const Cube& getDomain(void) const // Returns the LiDAR data set's domain
 		{
 		return root.domain;
+		}
+	const OffsetVector& getOffset(void) const // Returns the vector that needs to be added back to LiDAR points
+		{
+		return offset;
 		}
 	Point getRootCenter(void) const; // Returns the center of the root node's domain
 	Scalar getRootSize(void) const; // Returns the size of the root node's domain
@@ -222,6 +417,14 @@ class LidarProcessOctree
 		{
 		/* Call recursive directed point processor on the root node: */
 		processPointsDirectedOctree(root,processFunctor);
+		}
+	NodeIterator beginNodes(void) // Returns iterator to the first node (root)
+		{
+		return NodeIterator(this,&root);
+		}
+	NodeIterator endNodes(void) // Returns iterator past last node
+		{
+		return NodeIterator(this,0);
 		}
 	size_t getNumSubdivideCalls(void) const // Returns total number of calls to the subdivide method
 		{

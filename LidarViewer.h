@@ -32,9 +32,11 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
 #include <GLMotif/TextFieldSlider.h>
+#include <GLMotif/FileSelectionDialog.h>
 #include <Vrui/LocatorTool.h>
 #include <Vrui/LocatorToolAdapter.h>
 #include <Vrui/DraggingTool.h>
+#include <Vrui/SurfaceNavigationTool.h>
 #include <Vrui/Vrui.h>
 #include <Vrui/Application.h>
 
@@ -55,6 +57,8 @@ class InputDevice;
 class Lightsource;
 }
 class LidarOctree;
+class LidarTool;
+class ProfileTool;
 class Primitive;
 
 class LidarViewer:public Vrui::Application,public GLObject
@@ -140,11 +144,14 @@ class LidarViewer:public Vrui::Application,public GLObject
 		};
 	
 	friend class SelectorLocator;
+	friend class LidarTool;
+	friend class ProfileTool;
 	
 	/* Elements: */
-	std::string lidarFileName; // Name of the displayed LiDAR file
 	unsigned int memCacheSize; // Memory cache size for the LiDAR data representation in MB
-	LidarOctree* octree; // The LiDAR data representation
+	std::vector<std::string> lidarFileNames; // Array of file names from with the octrees were loaded
+	int numOctrees; // Number of LiDAR octrees rendered in parallel
+	LidarOctree** octrees; // Array of LiDAR data representations rendered in parallel
 	Scalar renderQuality; // The current rendering quality (adapted to achieve optimal frame rate)
 	Scalar fncWeight; // Weight factor for focus+context LOD adjustment
 	float pointSize; // The pixel size used to render LiDAR points
@@ -214,7 +221,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	virtual void toolDestructionCallback(Vrui::ToolManager::ToolDestructionCallbackData* cbData);
 	virtual void frame(void);
 	virtual void display(GLContextData& contextData) const;
-	void alignSurfaceFrame(Vrui::NavTransform& surfaceFrame);
+	void alignSurfaceFrame(const Vrui::SurfaceNavigationTool::AlignmentData& alignmentData);
 	void centerDisplayCallback(Misc::CallbackData* cbData);
 	void changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData);
 	void classifySelectionCallback(Misc::CallbackData* cbData);
@@ -227,6 +234,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void extractCylinderCallback(Misc::CallbackData* cbData);
 	void intersectPrimitivesCallback(Misc::CallbackData* cbData);
 	void loadPrimitivesCallback(Misc::CallbackData* cbData);
+	void loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData);
 	void savePrimitivesCallback(Misc::CallbackData* cbData);
 	void deleteSelectedPrimitivesCallback(Misc::CallbackData* cbData);
 	void clearPrimitivesCallback(Misc::CallbackData* cbData);

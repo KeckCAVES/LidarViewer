@@ -1,6 +1,6 @@
 /***********************************************************************
 ReadPlyFile - Function to read 3D polygon files in PLY format.
-Copyright (c) 2004-2010 Oliver Kreylos
+Copyright (c) 2004-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 

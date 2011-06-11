@@ -1,6 +1,6 @@
 /***********************************************************************
 ReadPlyFile - Function to read 3D polygon files in PLY format.
-Copyright (c) 2004-2010 Oliver Kreylos
+Copyright (c) 2004-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -28,23 +28,14 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/SelfDestructPointer.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
-#include <Misc/FileCharacterSource.h>
-#include <Misc/ValueSource.h>
+#include <IO/File.h>
+#include <IO/OpenFile.h>
+#include <IO/ValueSource.h>
 
 #include "LidarTypes.h"
 #include "PointAccumulator.h"
 
 namespace {
-
-/**********************************
-Enumerated type for PLY file modes:
-**********************************/
-
-enum PlyFileMode
-	{
-	PLY_WRONGFORMAT,PLY_ASCII,PLY_BINARY
-	};
 
 /*********************************************
 Enumerated type for basic PLY file data types:
@@ -158,7 +149,7 @@ class AsciiFileReader<int>
 	{
 	/* Methods: */
 	public:
-	static int readValue(Misc::ValueSource& asciiFile)
+	static int readValue(IO::ValueSource& asciiFile)
 		{
 		return asciiFile.readInteger();
 		}
@@ -169,7 +160,7 @@ class AsciiFileReader<unsigned int>
 	{
 	/* Methods: */
 	public:
-	static unsigned int readValue(Misc::ValueSource& asciiFile)
+	static unsigned int readValue(IO::ValueSource& asciiFile)
 		{
 		return asciiFile.readUnsignedInteger();
 		}
@@ -180,7 +171,7 @@ class AsciiFileReader<double>
 	{
 	/* Methods: */
 	public:
-	static double readValue(Misc::ValueSource& asciiFile)
+	static double readValue(IO::ValueSource& asciiFile)
 		{
 		return asciiFile.readNumber();
 		}
@@ -199,10 +190,11 @@ class DataValue
 		}
 	
 	/* Methods: */
+	virtual DataValue* clone(void) const =0;
 	virtual size_t getFileSize(void) const =0;
 	virtual size_t getMemorySize(void) const =0;
-	virtual void read(Misc::File& binaryPlyFile) =0;
-	virtual void read(Misc::ValueSource& asciiPlyFile) =0;
+	virtual void read(IO::File& binaryPlyFile) =0;
+	virtual void read(IO::ValueSource& asciiPlyFile) =0;
 	virtual int getInt(void) const =0;
 	virtual unsigned int getUnsignedInt(void) const =0;
 	virtual double getDouble(void) const =0;
@@ -225,6 +217,10 @@ class DataValueTemplate:public DataValue,public DataValueTypes<dataTypeParam>
 	typename Base2::MemoryType value; // Data value
 	
 	/* Methods: */
+	virtual DataValue* clone(void) const
+		{
+		return new DataValueTemplate(*this);
+		}
 	virtual size_t getFileSize(void) const
 		{
 		return sizeof(typename Base2::FileType);
@@ -233,11 +229,11 @@ class DataValueTemplate:public DataValue,public DataValueTypes<dataTypeParam>
 		{
 		return sizeof(typename Base2::MemoryType);
 		}
-	virtual void read(Misc::File& binaryPlyFile)
+	virtual void read(IO::File& binaryPlyFile)
 		{
 		value=typename Base2::MemoryType(binaryPlyFile.read<typename Base2::FileType>());
 		}
-	virtual void read(Misc::ValueSource& asciiPlyFile)
+	virtual void read(IO::ValueSource& asciiPlyFile)
 		{
 		value=AsciiFileReader<typename Base2::MemoryType>::readValue(asciiPlyFile);
 		}
@@ -310,87 +306,112 @@ class Property
 		{
 		/* Elements: */
 		private:
-		const Property* property; // Pointer to property definition for this value
+		PropertyType propertyType; // Type of the value's property
 		DataValue* scalar; // Pointer to scalar value for scalar properties
 		DataValue* listSize; // List size value for list properties
 		std::vector<DataValue*> listElements; // Vector of pointers to list elements for list properties
 		
-		/* Private methods: */
-		void clearListElements(void)
-			{
-			for(std::vector<DataValue*>::iterator eIt=listElements.begin();eIt!=listElements.end();++eIt)
-				delete *eIt;
-			listElements.clear();
-			}
-		
 		/* Constructors and destructors: */
 		public:
-		Value(const Property* sProperty) // Creates empty value structure for the given property
-			:property(sProperty),
+		Value(const Property& property) // Creates empty value structure for the given property
+			:propertyType(property.getPropertyType()),
 			 scalar(0),
 			 listSize(0)
 			{
-			if(property->getPropertyType()==Property::LIST)
+			if(propertyType==Property::SCALAR)
 				{
-				/* Allocate space for list size: */
-				listSize=DataValueFactory::newDataValue(property->getListSizeType());
+				/* Allocate space for scalar: */
+				scalar=DataValueFactory::newDataValue(property.getScalarType());
 				}
 			else
 				{
-				/* Allocate space for scalar: */
-				scalar=DataValueFactory::newDataValue(property->getScalarType());
-				}
-			}
-		Value(const Value& source)
-			:property(source.property),
-			 scalar(0),
-			 listSize(0)
-			{
-			if(property->getPropertyType()==Property::LIST)
-				{
 				/* Allocate space for list size: */
-				listSize=DataValueFactory::newDataValue(property->getListSizeType());
-				}
-			else
-				{
-				/* Allocate space for scalar: */
-				scalar=DataValueFactory::newDataValue(property->getScalarType());
+				listSize=DataValueFactory::newDataValue(property.getListSizeType());
+				
+				/* Create one list element to get started: */
+				listElements.push_back(DataValueFactory::newDataValue(property.getListElementType()));
 				}
 			}
+		private:
+		Value(const Value& source); // Prohibit copy constructor
+		Value& operator=(const Value& source); // Prohibit assignment operator
+		public:
 		~Value(void)
 			{
-			if(property->getPropertyType()==Property::LIST)
-				{
-				delete listSize;
-				clearListElements();
-				}
-			else
-				delete scalar;
+			delete scalar;
+			delete listSize;
+			for(std::vector<DataValue*>::iterator eIt=listElements.begin();eIt!=listElements.end();++eIt)
+				delete *eIt;
 			}
 		
 		/* Methods: */
-		template <class PlyFileParam>
-		void read(PlyFileParam& plyFile) // Reads value from binary or ASCII PLY file
+		size_t getFileSize(void) const // Returns value's size in binary files (returns minimal file size for list values)
 			{
-			if(property->getPropertyType()==Property::LIST)
+			if(propertyType==SCALAR)
+				return scalar->getFileSize();
+			else
+				return listSize->getFileSize();
+			}
+		void skip(IO::ValueSource& plyFile) // Skips value from ASCII PLY file (never used)
+			{
+			if(propertyType==Property::SCALAR)
+				{
+				/* Skip scalar: */
+				scalar->read(plyFile);
+				}
+			else
 				{
 				/* Read list size: */
 				listSize->read(plyFile);
 				unsigned int listSizeValue=listSize->getUnsignedInt();
 				
-				/* Read all list elements: */
-				clearListElements();
-				listElements.reserve(listSizeValue);
+				/* Skip all list elements: */
 				for(unsigned int i=0;i<listSizeValue;++i)
-					{
-					listElements[i]=DataValueFactory::newDataValue(property->getListElementType());
-					listElements[i]->read(plyFile);
-					}
+					listElements[0]->read(plyFile);
+				}
+			}
+		void skip(IO::File& plyFile) // Skips value from binary PLY file
+			{
+			if(propertyType==Property::SCALAR)
+				{
+				/* Skip scalar: */
+				plyFile.skip<char>(scalar->getFileSize());
 				}
 			else
 				{
+				/* Read list size: */
+				listSize->read(plyFile);
+				unsigned int listSizeValue=listSize->getUnsignedInt();
+				
+				/* Skip all list elements: */
+				plyFile.skip<char>(listElements[0]->getFileSize()*listSizeValue);
+				}
+			}
+		template <class PlyFileParam>
+		void read(PlyFileParam& plyFile) // Reads value from binary or ASCII PLY file
+			{
+			if(propertyType==Property::SCALAR)
+				{
 				/* Read scalar: */
 				scalar->read(plyFile);
+				}
+			else
+				{
+				/* Read list size: */
+				listSize->read(plyFile);
+				unsigned int listSizeValue=listSize->getUnsignedInt();
+				
+				/* Ensure the list storage is long enough: */
+				unsigned int currentListSize=listElements.size();
+				while(currentListSize<listSizeValue)
+					{
+					listElements.push_back(listElements[0]->clone());
+					++currentListSize;
+					}
+				
+				/* Read all list elements: */
+				for(unsigned int i=0;i<listSizeValue;++i)
+					listElements[i]->read(plyFile);
 				}
 			}
 		const DataValue* getScalar(void) const
@@ -431,7 +452,7 @@ class Property
 	
 	/* Constructors and destructors: */
 	public:
-	Property(Misc::ValueSource& plyFile)
+	Property(IO::ValueSource& plyFile)
 		{
 		/* Read the property type: */
 		std::string tag=plyFile.readString();
@@ -491,63 +512,92 @@ class Element
 		{
 		/* Embedded classes: */
 		public:
-		typedef std::vector<Property::Value> PropertyValueList;
+		typedef std::vector<Property::Value*> PropertyValueList;
 		
 		/* Elements: */
 		private:
-		const Element* element; // Pointer to element definition for this value
+		const Element& element; // Pointer to element definition for this value
 		PropertyValueList propertyValues; // Vector of values for the properties of this element
 		
 		/* Constructors and destructors: */
 		public:
-		Value(const Element* sElement)
+		Value(const Element& sElement)
 			:element(sElement)
 			{
 			/* Initialize vector of property values: */
-			for(PropertyList::const_iterator plIt=element->propertiesBegin();plIt!=element->propertiesEnd();++plIt)
-				{
-				propertyValues.push_back(Property::Value(&(*plIt)));
-				}
+			for(PropertyList::const_iterator plIt=element.propertiesBegin();plIt!=element.propertiesEnd();++plIt)
+				propertyValues.push_back(new Property::Value(*plIt));
 			}
-		Value(const Value& source)
-			:element(source.element)
+		private:
+		Value(const Value& source); // Prohibit copy constructor
+		Value& operator=(const Value& source); // Prohibit assignment operator
+		public:
+		~Value(void)
 			{
-			/* Initialize vector of property values: */
-			for(PropertyList::const_iterator plIt=element->propertiesBegin();plIt!=element->propertiesEnd();++plIt)
-				{
-				propertyValues.push_back(Property::Value(&(*plIt)));
-				}
+			/* Destroy vector of property values: */
+			for(PropertyValueList::iterator pvIt=propertyValues.begin();pvIt!=propertyValues.end();++pvIt)
+				delete *pvIt;
 			}
 		
 		/* Methods: */
+		public:
+		size_t getFileSize(void) const // Returns the total file size of all property values (returns minimal file size for any included list values)
+			{
+			size_t result=0;
+			for(PropertyValueList::const_iterator pvIt=propertyValues.begin();pvIt!=propertyValues.end();++pvIt)
+				result+=(*pvIt)->getFileSize();
+			return result;
+			}
 		template <class PlyFileParam>
-		void read(PlyFileParam& plyFile) // Reads element from binary or ASCII PLY file
+		void skip(PlyFileParam& plyFile) // Skips element value from binary or ASCII PLY file
 			{
 			for(PropertyValueList::iterator pvIt=propertyValues.begin();pvIt!=propertyValues.end();++pvIt)
-				pvIt->read(plyFile);
+				(*pvIt)->skip(plyFile);
 			}
-		const Property::Value& getValue(unsigned int propertyIndex) const
+		template <class PlyFileParam>
+		void read(PlyFileParam& plyFile) // Reads element value from binary or ASCII PLY file
 			{
-			return propertyValues[propertyIndex];
+			for(PropertyValueList::iterator pvIt=propertyValues.begin();pvIt!=propertyValues.end();++pvIt)
+				(*pvIt)->read(plyFile);
+			}
+		const Property::Value& getValue(unsigned int propertyIndex) const // Returns value of one of the element's properties
+			{
+			return *propertyValues[propertyIndex];
 			}
 		};
 	
 	/* Elements: */
 	private:
 	std::string name; // Name of this element
+	size_t numValues; // Number of values of this element in the file
 	PropertyList properties; // Vector of properties of this element
 	
 	/* Constructors and destructors: */
 	public:
-	Element(std::string sName)
-		:name(sName)
+	Element(std::string sName,size_t sNumValues)
+		:name(sName),numValues(sNumValues)
 		{
 		}
 	
 	/* Methods: */
-	void addProperty(Misc::ValueSource& plyFile)
+	bool isElement(const char* elementName) const // Returns true if the element's name matches the given string
+		{
+		return name==elementName;
+		}
+	size_t getNumValues(void) const
+		{
+		return numValues;
+		}
+	void addProperty(IO::ValueSource& plyFile)
 		{
 		properties.push_back(Property(plyFile));
+		}
+	bool hasListProperty(void) const // Returns true if the element has at least one list property
+		{
+		bool result=false;
+		for(PropertyList::const_iterator pIt=properties.begin();!result&&pIt!=properties.end();++pIt,++result)
+			result=pIt->getPropertyType()==Property::LIST;
+		return result;
 		}
 	size_t getNumProperties(void) const
 		{
@@ -561,7 +611,7 @@ class Element
 		{
 		return properties.end();
 		}
-	unsigned int getPropertyIndex(std::string propertyName) const
+	unsigned int getPropertyIndex(const char* propertyName) const
 		{
 		unsigned int result=0;
 		for(PropertyList::const_iterator pIt=properties.begin();pIt!=properties.end();++pIt,++result)
@@ -571,138 +621,153 @@ class Element
 		}
 	};
 
-/*******************************************************
-Helper function to determine the file type of PLY files:
-*******************************************************/
+/**************************************
+Helper class to parse PLY file headers:
+**************************************/
 
 struct PlyFileHeader // Structure containing relevant information from a PLY file's header
 	{
-	/* Elements: */
+	/* Embedded classes: */
 	public:
-	bool isPlyFile; // Flag if the file is a PLY file
-	PlyFileMode plyFileMode; // ASCII or binary
-	Misc::File::Endianness plyFileEndianness; // Endianness of binary PLY file
-	Element vertex; // Vertex element descriptor
-	unsigned int numVertices; // Number of vertex elements
-	Element face; // Face element descriptor
-	unsigned int numFaces; // Number of face elements
+	enum FileType
+		{
+		Unknown,Ascii,Binary
+		};
+	
+	/* Elements: */
+	private:
+	bool valid; // Flag if the file is a valid PLY file (as much as determined by parsing the header)
+	FileType fileType; // ASCII or binary
+	IO::File::Endianness fileEndianness; // Endianness of binary PLY file
+	std::vector<Element> elements; // List of elements in the file, in the order in which they appear in the file
 	
 	/* Constructors and destructors: */
+	public:
 	PlyFileHeader(void)
-		:isPlyFile(false),plyFileMode(PLY_WRONGFORMAT),plyFileEndianness(Misc::File::DontCare),
-		 vertex("vertex"),numVertices(0),
-		 face("face"),numFaces(0)
+		:valid(false),fileType(Unknown),fileEndianness(IO::File::DontCare)
 		{
 		}
-	};
-
-PlyFileHeader* readPlyFileHeader(const char* plyFileName)
-	{
-	/* Open the PLY file in text mode: */
-	Misc::FileCharacterSource plyFile(plyFileName);
-	Misc::ValueSource ply(plyFile);
-	ply.skipWs();
-	
-	/* Process the PLY file header: */
-	Misc::SelfDestructPointer<PlyFileHeader> result(new PlyFileHeader());
-	int currentElement=-1;
-	bool haveEndHeader=false;
-	while(!ply.eof())
+	PlyFileHeader(IO::File& plyFile)
+		:valid(false),fileType(Unknown),fileEndianness(IO::File::DontCare)
 		{
-		/* Read the next tag: */
-		std::string tag=ply.readString();
-		if(tag=="ply")
-			result->isPlyFile=true;
-		else if(tag=="format")
+		parseHeader(plyFile);
+		}
+	
+	/* Methods: */
+	bool parseHeader(IO::File& plyFile) // Creates header structure by parsing a PLY file's header
+		{
+		/* Attach a new value source to the PLY file: */
+		IO::ValueSource ply(plyFile);
+		ply.skipWs();
+		
+		/* Process the PLY file header: */
+		std::vector<Element>::iterator currentElement=elements.end();
+		bool isPly=false;
+		bool haveEndHeader=false;
+		while(!ply.eof())
 			{
-			/* Read the format type and version number: */
-			std::string format=ply.readString();
-			if(format=="ascii")
-				result->plyFileMode=PLY_ASCII;
-			else if(format=="binary_little_endian")
+			/* Read the next tag: */
+			std::string tag=ply.readString();
+			if(tag=="ply")
+				isPly=true;
+			else if(tag=="format")
 				{
-				result->plyFileMode=PLY_BINARY;
-				result->plyFileEndianness=Misc::File::LittleEndian;
+				/* Read the format type and version number: */
+				std::string format=ply.readString();
+				if(format=="ascii")
+					fileType=Ascii;
+				else if(format=="binary_little_endian")
+					{
+					fileType=Binary;
+					fileEndianness=IO::File::LittleEndian;
+					}
+				else if(format=="binary_big_endian")
+					{
+					fileType=Binary;
+					fileEndianness=IO::File::BigEndian;
+					}
+				else
+					{
+					/* Unknown format; bail out: */
+					break;
+					}
+				double version=ply.readNumber();
+				if(version!=1.0)
+					break;
 				}
-			else if(format=="binary_big_endian")
+			else if(tag=="comment")
 				{
-				result->plyFileMode=PLY_BINARY;
-				result->plyFileEndianness=Misc::File::BigEndian;
+				/* Skip the rest of the line: */
+				ply.skipLine();
+				ply.skipWs();
 				}
-			double version=ply.readNumber();
-			if(version!=1.0)
-				result->isPlyFile=false;
-			}
-		else if(tag=="comment")
-			{
-			/* Skip the rest of the line: */
-			ply.skipLine();
-			ply.skipWs();
-			}
-		else if(tag=="element")
-			{
-			/* Read the element type: */
-			std::string elementType=ply.readString();
-			if(elementType=="vertex")
+			else if(tag=="element")
 				{
-				/* Parse a vertex element: */
-				currentElement=0;
-				result->numVertices=ply.readUnsignedInteger();
+				/* Read the element type and number of elements: */
+				std::string elementType=ply.readString();
+				size_t numElements=ply.readUnsignedInteger();
+				
+				/* Append a new element: */
+				elements.push_back(Element(elementType,numElements));
+				currentElement=elements.end()-1;
 				}
-			else if(elementType=="face")
+			else if(tag=="property")
 				{
-				/* Parse a face element: */
-				currentElement=1;
-				result->numFaces=ply.readUnsignedInteger();
+				if(currentElement!=elements.end())
+					{
+					/* Parse a property: */
+					currentElement->addProperty(ply);
+					}
+				else
+					{
+					/* Skip the property: */
+					ply.skipLine();
+					ply.skipWs();
+					}
+				}
+			else if(tag=="end_header")
+				{
+				haveEndHeader=true;
+				break;
 				}
 			else
 				{
-				/* Parse an unknown element: */
-				currentElement=-1;
+				/* Skip the unknown tag: */
 				ply.skipLine();
 				ply.skipWs();
 				}
 			}
-		else if(tag=="property")
-			{
-			/* Parse a property: */
-			switch(currentElement)
-				{
-				case 0: // Vertex element
-					result->vertex.addProperty(ply);
-					break;
-				
-				case 1: // Face element
-					result->face.addProperty(ply);
-					break;
-				
-				default:
-					; // Can't happen
-				}
-			}
-		else if(tag=="end_header")
-			{
-			haveEndHeader=true;
-			break;
-			}
-		else
-			{
-			/* Skip the unknown tag: */
-			ply.skipLine();
-			ply.skipWs();
-			}
+		
+		/* Check if the header was read completely: */
+		valid=isPly&&haveEndHeader&&fileType!=Unknown;
+		return valid;
 		}
-	if(!haveEndHeader)
-		result->isPlyFile=false;
-	
-	return result.releaseTarget();
-	}
+	bool isValid(void) const // Returns true if the header described a valid PLY file
+		{
+		return valid;
+		}
+	FileType getFileType(void) const // Returns the file's type
+		{
+		return fileType;
+		}
+	IO::File::Endianness getFileEndianness(void) const // Returns the endianness for binary PLY files
+		{
+		return fileEndianness;
+		}
+	size_t getNumElements(void) const // Returns the number of elements in the PLY file
+		{
+		return elements.size();
+		}
+	const Element& getElement(size_t index) const // Returns the element of the given index
+		{
+		return elements[index];
+		}
+	};
 
 template <class PlyFileParam>
-void readPlyFileVertices(PlyFileParam& ply,PlyFileHeader& header,PointAccumulator& pa,const float colorMask[3])
+void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulator& pa,const float colorMask[3])
 	{
 	/* Get the indices of all relevant vertex value components: */
-	Element& vertex=header.vertex;
 	unsigned int posIndex[3];
 	posIndex[0]=vertex.getPropertyIndex("x");
 	posIndex[1]=vertex.getPropertyIndex("y");
@@ -714,8 +779,8 @@ void readPlyFileVertices(PlyFileParam& ply,PlyFileHeader& header,PointAccumulato
 	bool hasColor=colIndex[0]<vertex.getNumProperties()&&colIndex[1]<vertex.getNumProperties()&&colIndex[2]<vertex.getNumProperties();
 	
 	/* Read all vertices: */
-	Element::Value vertexValue(&vertex);
-	for(unsigned int i=0;i<header.numVertices;++i)
+	Element::Value vertexValue(vertex);
+	for(unsigned int i=0;i<vertex.getNumValues();++i)
 		{
 		/* Read vertex element from file: */
 		vertexValue.read(ply);
@@ -747,51 +812,85 @@ void readPlyFileVertices(PlyFileParam& ply,PlyFileHeader& header,PointAccumulato
 		}
 	}
 
+void skipElement(const Element& element,IO::File& ply)
+	{
+	/* Check if the element has variable size: */
+	Element::Value value(element);
+	if(element.hasListProperty())
+		{
+		/* Need to skip each value separately: */
+		for(size_t i=0;i<element.getNumValues();++i)
+			value.skip(ply);
+		}
+	else
+		{
+		/* Calculate the file size of each value of the element: */
+		size_t valueSize=value.getFileSize();
+		ply.skip<char>(valueSize*element.getNumValues());
+		}
+	}
+
+void skipElement(const Element& element,IO::ValueSource& ply)
+	{
+	/* Skip one line for each value of the element: */
+	for(size_t i=0;i<element.getNumValues();++i)
+		ply.skipLine();
+	ply.skipWs();
+	}
+
+template <class PlyFileParam>
+void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccumulator& pa,const float colorMask[3])
+	{
+	/* Process all elements in order: */
+	for(size_t elementIndex=0;elementIndex<header.getNumElements();++elementIndex)
+		{
+		/* Get the next element: */
+		const Element& element=header.getElement(elementIndex);
+		
+		/* Check if it's the vertex element: */
+		if(element.isElement("vertex"))
+			{
+			/* Read the vertex element: */
+			readPlyFileVertices(element,ply,pa,colorMask);
+			}
+		else
+			{
+			/* Skip the entire element: */
+			skipElement(element,ply);
+			}
+		}
+	}
+
 }
 
 void readPlyFile(PointAccumulator& pa,const char* fileName,const float colorMask[3])
 	{
+	/* Open the PLY file: */
+	IO::AutoFile plyFile(IO::openFile(fileName));
+	
 	/* Read the PLY file's header: */
-	PlyFileHeader* header=readPlyFileHeader(fileName);
-	if(!header->isPlyFile||header->plyFileMode==PLY_WRONGFORMAT)
+	PlyFileHeader header(*plyFile);
+	if(!header.isValid())
 		{
 		std::cerr<<"Error: File "<<fileName<<" is not a valid PLY file"<<std::endl;
-		delete header;
 		return;
 		}
 	
-	if(header->plyFileMode==PLY_BINARY)
+	/* Read the PLY file in ASCII or binary mode: */
+	if(header.getFileType()==PlyFileHeader::Ascii)
 		{
-		/* Open the PLY file in binary mode: */
-		Misc::File plyFile(fileName,"rb",header->plyFileEndianness);
+		/* Attach a value source to the PLY file: */
+		IO::ValueSource ply(*plyFile);
 		
-		/* Skip the header: */
-		while(true)
-			{
-			char line[256];
-			plyFile.gets(line,sizeof(line));
-			if(strcmp(line,"end_header\n")==0)
-				break;
-			}
-		
-		/* Read all vertices: */
-		readPlyFileVertices(plyFile,*header,pa,colorMask);
+		/* Read the PLY file in ASCII mode: */
+		readPlyFileElements(header,ply,pa,colorMask);
 		}
-	else
+	else if(header.getFileType()==PlyFileHeader::Binary)
 		{
-		/* Open the PLY file in text mode: */
-		Misc::FileCharacterSource plyFile(fileName);
-		Misc::ValueSource ply(plyFile);
-		ply.skipWs();
+		/* Set the PLY file's endianness: */
+		plyFile->setEndianness(header.getFileEndianness());
 		
-		/* Skip the header: */
-		while(ply.readString()!="end_header")
-			;
-		
-		/* Read all vertices: */
-		readPlyFileVertices(ply,*header,pa,colorMask);
+		/* Read the PLY file in binary mode: */
+		readPlyFileElements(header,*plyFile,pa,colorMask);
 		}
-	
-	/* Clean up and return: */
-	delete header;
 	}

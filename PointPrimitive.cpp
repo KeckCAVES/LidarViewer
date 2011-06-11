@@ -25,7 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
+#include <IO/File.h>
 #include <Comm/MulticastPipe.h>
 #include <Math/Math.h>
 #include <GL/gl.h>
@@ -187,7 +187,7 @@ PointPrimitive::PointPrimitive(Comm::MulticastPipe* pipe)
 	pipe->read<Scalar>(point.getComponents(),3);
 	}
 
-PointPrimitive::PointPrimitive(Misc::File& file,const Primitive::Vector& translation)
+PointPrimitive::PointPrimitive(IO::File& file,const Primitive::Vector& translation)
 	{
 	/* Read the point parameters: */
 	file.read<Scalar>(point.getComponents(),3);
@@ -215,7 +215,7 @@ void PointPrimitive::glRenderAction(GLContextData& contextData) const
 	glPopAttrib();
 	}
 
-void PointPrimitive::write(Misc::File& file,const Primitive::Vector& translation) const
+void PointPrimitive::write(IO::File& file,const Primitive::Vector& translation) const
 	{
 	/* Write the point parameters: */
 	file.write<Scalar>((point+translation).getComponents(),3);
