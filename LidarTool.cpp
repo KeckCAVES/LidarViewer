@@ -23,7 +23,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "LidarTool.h"
 
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Geometry/Ray.h>
 #include <Geometry/OrthogonalTransformation.h>
 #include <GL/gl.h>
@@ -147,7 +147,7 @@ void LidarTool::frame(void)
 			{
 			/* Send the intersection to the slaves: */
 			Vrui::getMainPipe()->write<Scalar>(rayParameter);
-			// Vrui::getMainPipe()->finishMessage();
+			// Vrui::getMainPipe()->flush();
 			}
 		}
 	else

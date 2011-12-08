@@ -1,6 +1,6 @@
 /***********************************************************************
 PlanePrimitive - Class for planes extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -31,7 +31,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "Primitive.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 class LidarOctree;
@@ -62,8 +62,8 @@ class PlanePrimitive:public Primitive,public GLObject
 	
 	/* Constructors and destructors: */
 	public:
-	PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates plane by processing selected points from the given octree; writes result to given pipe if !=0
-	PlanePrimitive(Comm::MulticastPipe* pipe); // Creates plane by reading plane data from given pipe
+	PlanePrimitive(const LidarOctree* octree,const Vector& translation,Cluster::MulticastPipe* pipe); // Creates plane by processing selected points from the given octree; writes result to given pipe if !=0
+	PlanePrimitive(Cluster::MulticastPipe* pipe); // Creates plane by reading plane data from given pipe
 	PlanePrimitive(IO::File& file,const Vector& translation); // Reads a plane primitive from a binary file
 	
 	/* Methods: */

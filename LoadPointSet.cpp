@@ -35,7 +35,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "LidarElevationSampler.h"
 #include "SceneGraph.h"
 
-void loadPointSet(const char* lidarFileName,unsigned int memCacheSize,const char* pointFileName,Scalar filterRadius,int numLobes,const Vector& pointOffset)
+void loadPointSet(const char* lidarFileName,unsigned int memCacheSize,IO::FilePtr pointFile,Scalar filterRadius,int numLobes,const Vector& pointOffset)
 	{
 	/* Create a color and coordinate node to receive points: */
 	SceneGraph::ColorNode* color=new SceneGraph::ColorNode;
@@ -56,9 +56,8 @@ void loadPointSet(const char* lidarFileName,unsigned int memCacheSize,const char
 	/* Create a temporary LiDAR processing octree to calculate point elevations: */
 	LidarProcessOctree lpo(lidarFileName,size_t(memCacheSize)*size_t(1024*1024));
 	
-	/* Open the point file: */
-	IO::AutoFile pointFile(IO::openFile(pointFileName));
-	IO::ValueSource pointSource(*pointFile);
+	/* Attach a value source to the point file: */
+	IO::ValueSource pointSource(pointFile);
 	pointSource.setWhitespace("");
 	pointSource.setPunctuation(",\n");
 	pointSource.setQuotes("\"");

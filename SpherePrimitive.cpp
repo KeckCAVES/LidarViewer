@@ -1,6 +1,6 @@
 /***********************************************************************
 SpherePrimitive - Class for spheres extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/ThrowStdErr.h>
 #include <IO/File.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Geometry/Vector.h>
 #include <GL/gl.h>
@@ -57,7 +57,7 @@ SpherePrimitive::DataItem::~DataItem(void)
 Methods of class SpherePrimitive:
 ********************************/
 
-SpherePrimitive::SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
+SpherePrimitive::SpherePrimitive(const LidarOctree* octree,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Extract all selected points from the octree: */
 	LidarSelectionExtractor<SphereFitter::Point> lse;
@@ -81,7 +81,9 @@ SpherePrimitive::SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* 
 		
 		/* Print the sphere's equation: */
 		std::cout<<"Sphere fitting "<<numPoints<<" points"<<std::endl;
-		std::cout<<"Center point: ("<<point[0]<<", "<<point[1]<<", "<<point[2]<<")"<<std::endl;
+		Point tPoint=point;
+		tPoint+=translation;
+		std::cout<<"Center point: ("<<tPoint[0]<<", "<<tPoint[1]<<", "<<tPoint[2]<<")"<<std::endl;
 		std::cout<<"Radius: "<<radius<<std::endl;
 		std::cout<<"RMS approximation residual: "<<rms<<std::endl;
 		
@@ -93,7 +95,7 @@ SpherePrimitive::SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* 
 			pipe->write<Scalar>(rms);
 			pipe->write<Scalar>(point.getComponents(),3);
 			pipe->write<Scalar>(radius);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -101,13 +103,13 @@ SpherePrimitive::SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* 
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("SpherePrimitive::SpherePrimitive: Not enough selected points");
 		}
 	}
 
-SpherePrimitive::SpherePrimitive(Comm::MulticastPipe* pipe)
+SpherePrimitive::SpherePrimitive(Cluster::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())

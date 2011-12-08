@@ -2,7 +2,7 @@
 PointPrimitive - Class for points extracted from point clouds by
 intersecting three plane primitives or one line primitive and one plane
 primitive.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,7 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
 #include <IO/File.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Math/Math.h>
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
@@ -41,7 +41,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 Methods of class PointPrimitive:
 *******************************/
 
-PointPrimitive::PointPrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const PlanePrimitive* p3,Comm::MulticastPipe* pipe)
+PointPrimitive::PointPrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const PlanePrimitive* p3,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Get the three planes' plane equations: */
 	const PlanePrimitive* ps[3];
@@ -126,18 +126,20 @@ PointPrimitive::PointPrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2
 	
 	/* Print the point's equation: */
 	std::cout<<"Point intersecting three planes"<<std::endl;
-	std::cout<<"Point: ("<<point[0]<<", "<<point[1]<<", "<<point[2]<<")"<<std::endl;
+	Point tPoint=point;
+	tPoint+=translation;
+	std::cout<<"Point: ("<<tPoint[0]<<", "<<tPoint[1]<<", "<<tPoint[2]<<")"<<std::endl;
 	
 	if(pipe!=0)
 		{
 		/* Send the extracted primitive over the pipe: */
 		pipe->write<int>(1);
 		pipe->write<Scalar>(point.getComponents(),3);
-		pipe->finishMessage();
+		pipe->flush();
 		}
 	}
 
-PointPrimitive::PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,Comm::MulticastPipe* pipe)
+PointPrimitive::PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Get the plane's plane equation: */
 	const PlanePrimitive::Plane& plane=p->getPlane();
@@ -156,14 +158,16 @@ PointPrimitive::PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,Co
 		
 		/* Print the point's equation: */
 		std::cout<<"Point intersecting one plane and one line"<<std::endl;
-		std::cout<<"Point: ("<<point[0]<<", "<<point[1]<<", "<<point[2]<<")"<<std::endl;
+		Point tPoint=point;
+		tPoint+=translation;
+		std::cout<<"Point: ("<<tPoint[0]<<", "<<tPoint[1]<<", "<<tPoint[2]<<")"<<std::endl;
 		
 		if(pipe!=0)
 			{
 			/* Send the extracted primitive over the pipe: */
 			pipe->write<int>(1);
 			pipe->write<Scalar>(point.getComponents(),3);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -171,13 +175,13 @@ PointPrimitive::PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,Co
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("PointPrimitive::PointPrimitive: Plane and line do not intersect");
 		}
 	}
 
-PointPrimitive::PointPrimitive(Comm::MulticastPipe* pipe)
+PointPrimitive::PointPrimitive(Cluster::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())

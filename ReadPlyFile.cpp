@@ -638,17 +638,17 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 	private:
 	bool valid; // Flag if the file is a valid PLY file (as much as determined by parsing the header)
 	FileType fileType; // ASCII or binary
-	IO::File::Endianness fileEndianness; // Endianness of binary PLY file
+	Misc::Endianness fileEndianness; // Endianness of binary PLY file
 	std::vector<Element> elements; // List of elements in the file, in the order in which they appear in the file
 	
 	/* Constructors and destructors: */
 	public:
 	PlyFileHeader(void)
-		:valid(false),fileType(Unknown),fileEndianness(IO::File::DontCare)
+		:valid(false),fileType(Unknown),fileEndianness(Misc::HostEndianness)
 		{
 		}
 	PlyFileHeader(IO::File& plyFile)
-		:valid(false),fileType(Unknown),fileEndianness(IO::File::DontCare)
+		:valid(false),fileType(Unknown),fileEndianness(Misc::HostEndianness)
 		{
 		parseHeader(plyFile);
 		}
@@ -657,7 +657,7 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 	bool parseHeader(IO::File& plyFile) // Creates header structure by parsing a PLY file's header
 		{
 		/* Attach a new value source to the PLY file: */
-		IO::ValueSource ply(plyFile);
+		IO::ValueSource ply(&plyFile);
 		ply.skipWs();
 		
 		/* Process the PLY file header: */
@@ -679,12 +679,12 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 				else if(format=="binary_little_endian")
 					{
 					fileType=Binary;
-					fileEndianness=IO::File::LittleEndian;
+					fileEndianness=Misc::LittleEndian;
 					}
 				else if(format=="binary_big_endian")
 					{
 					fileType=Binary;
-					fileEndianness=IO::File::BigEndian;
+					fileEndianness=Misc::BigEndian;
 					}
 				else
 					{
@@ -750,7 +750,7 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 		{
 		return fileType;
 		}
-	IO::File::Endianness getFileEndianness(void) const // Returns the endianness for binary PLY files
+	Misc::Endianness getFileEndianness(void) const // Returns the endianness for binary PLY files
 		{
 		return fileEndianness;
 		}
@@ -765,7 +765,7 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 	};
 
 template <class PlyFileParam>
-void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulator& pa,const float colorMask[3])
+void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulator& pa)
 	{
 	/* Get the indices of all relevant vertex value components: */
 	unsigned int posIndex[3];
@@ -786,29 +786,25 @@ void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulato
 		vertexValue.read(ply);
 
 		/* Extract vertex coordinates from vertex element: */
-		LidarPoint p;
+		PointAccumulator::Point p;
 		for(int j=0;j<3;++j)
-			p[j]=LidarPoint::Scalar(vertexValue.getValue(posIndex[j]).getScalar()->getDouble());
+			p[j]=vertexValue.getValue(posIndex[j]).getScalar()->getDouble();
 		
 		/* Extract vertex color from vertex element: */
+		PointAccumulator::Color c;
 		if(hasColor)
 			{
 			for(int j=0;j<3;++j)
-				{
-				float col=float(vertexValue.getValue(colIndex[j]).getScalar()->getDouble())*colorMask[j];
-				p.value[j]=Color::clampRound(col);
-				}
-			p.value[3]=Color::Scalar(255);
+				c[j]=float(vertexValue.getValue(colIndex[j]).getScalar()->getDouble());
 			}
 		else
 			{
 			for(int j=0;j<3;++j)
-				p.value[j]=Color::clampRound(255.0f*colorMask[j]);
-			p.value[3]=Color::Scalar(255);
+				c[j]=255.0f;
 			}
 		
 		/* Store the point: */
-		pa.addPoint(p);
+		pa.addPoint(p,c);
 		}
 	}
 
@@ -839,7 +835,7 @@ void skipElement(const Element& element,IO::ValueSource& ply)
 	}
 
 template <class PlyFileParam>
-void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccumulator& pa,const float colorMask[3])
+void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccumulator& pa)
 	{
 	/* Process all elements in order: */
 	for(size_t elementIndex=0;elementIndex<header.getNumElements();++elementIndex)
@@ -851,7 +847,7 @@ void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccu
 		if(element.isElement("vertex"))
 			{
 			/* Read the vertex element: */
-			readPlyFileVertices(element,ply,pa,colorMask);
+			readPlyFileVertices(element,ply,pa);
 			}
 		else
 			{
@@ -863,10 +859,10 @@ void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccu
 
 }
 
-void readPlyFile(PointAccumulator& pa,const char* fileName,const float colorMask[3])
+void readPlyFile(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the PLY file: */
-	IO::AutoFile plyFile(IO::openFile(fileName));
+	IO::FilePtr plyFile(IO::openFile(fileName));
 	
 	/* Read the PLY file's header: */
 	PlyFileHeader header(*plyFile);
@@ -880,10 +876,10 @@ void readPlyFile(PointAccumulator& pa,const char* fileName,const float colorMask
 	if(header.getFileType()==PlyFileHeader::Ascii)
 		{
 		/* Attach a value source to the PLY file: */
-		IO::ValueSource ply(*plyFile);
+		IO::ValueSource ply(plyFile);
 		
 		/* Read the PLY file in ASCII mode: */
-		readPlyFileElements(header,ply,pa,colorMask);
+		readPlyFileElements(header,ply,pa);
 		}
 	else if(header.getFileType()==PlyFileHeader::Binary)
 		{
@@ -891,6 +887,6 @@ void readPlyFile(PointAccumulator& pa,const char* fileName,const float colorMask
 		plyFile->setEndianness(header.getFileEndianness());
 		
 		/* Read the PLY file in binary mode: */
-		readPlyFileElements(header,*plyFile,pa,colorMask);
+		readPlyFileElements(header,*plyFile,pa);
 		}
 	}

@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarOctreeCreator - Class to create LiDAR octrees from point clouds
 using an out-of-core algorithm.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -190,7 +190,7 @@ void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node,unsigned
 			Misc::throwStdErr("LidarOctreeCreator::writeNodePoints: Unable to open temporary point file %s",fnt);
 		
 		/* Create the temporary point file: */
-		tempPointFiles[level].file=new File(pointFileFd,"w+b",File::DontCare);
+		tempPointFiles[level].file=new TempFile(pointFileFd,TempFile::ReadWrite);
 		tempPointFiles[level].fileName=fnt;
 		}
 	
@@ -203,7 +203,7 @@ void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node,unsigned
 	pointTree.releasePoints();
 	
 	/* Write the node's points to the appropriate point file: */
-	node.pointsOffset=tempPointFiles[level].file->tell();
+	node.pointsOffset=tempPointFiles[level].file->getWritePos();
 	tempPointFiles[level].file->write(pointTree.accessPoints(),node.numPoints);
 	}
 
@@ -463,7 +463,7 @@ void LidarOctreeCreator::calcFileOffsets(LidarOctreeCreator::Node& node,unsigned
 		}
 	}
 
-void LidarOctreeCreator::writeSubtree(const LidarOctreeCreator::Node& node,unsigned int level,File& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer)
+void LidarOctreeCreator::writeSubtree(const LidarOctreeCreator::Node& node,unsigned int level,LidarOctreeCreator::TempFile& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer)
 	{
 	if(level==0)
 		{
@@ -489,7 +489,7 @@ void LidarOctreeCreator::writeSubtree(const LidarOctreeCreator::Node& node,unsig
 		ofn.write(octreeFile);
 		
 		/* Copy the node's points from the temporary point file: */
-		tempPointFile.seekSet(node.pointsOffset);
+		tempPointFile.setReadPosAbs(node.pointsOffset);
 		tempPointFile.read(pointBuffer,node.numPoints);
 		pointsFile.write(pointBuffer,node.numPoints);
 		++numWrittenNodes;
@@ -536,6 +536,9 @@ LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int
 	std::cout<<"Creating octree for "<<totalNumPoints<<" points"<<std::endl;
 	std::cout<<"Creating octree... 0% done"<<std::flush;
 	createSubTree(root,rootDomain,0);
+	for(TempPointFileList::iterator tpfIt=tempPointFiles.begin();tpfIt!=tempPointFiles.end();++tpfIt)
+		if(tpfIt->file!=0)
+			tpfIt->file->flush();
 	std::cout<<std::endl;
 	delete[] root.points;
 	root.points=0;
@@ -628,7 +631,8 @@ void LidarOctreeCreator::write(const char* lidarFileName)
 	std::string octreeFileName=lidarFileName;
 	octreeFileName.push_back('/');
 	octreeFileName.append("Index");
-	LidarFile octreeFile(octreeFileName.c_str(),"wb",LidarFile::LittleEndian);
+	LidarFile octreeFile(octreeFileName.c_str(),IO::File::WriteOnly);
+	octreeFile.setEndianness(Misc::LittleEndian);
 	
 	/* Write the octree file header: */
 	LidarOctreeFileHeader ofh(rootDomain,maxNumPointsPerInteriorNode);
@@ -638,7 +642,8 @@ void LidarOctreeCreator::write(const char* lidarFileName)
 	std::string pointFileName=lidarFileName;
 	pointFileName.push_back('/');
 	pointFileName.append("Points");
-	LidarFile pointFile(pointFileName.c_str(),"wb",LidarFile::LittleEndian);
+	LidarFile pointFile(pointFileName.c_str(),IO::File::WriteOnly);
+	pointFile.setEndianness(Misc::LittleEndian);
 	
 	/* Write the point data file header: */
 	LidarDataFileHeader dfh((unsigned int)(sizeof(LidarPoint)));

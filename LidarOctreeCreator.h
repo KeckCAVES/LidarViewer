@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarOctreeCreator - Class to create LiDAR octrees from point clouds
 using an out-of-core algorithm.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,7 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <vector>
 #include <string>
-#include <Misc/LargeFile.h>
+#include <IO/StandardFile.h>
 
 #include "LidarTypes.h"
 #include "Cube.h"
@@ -41,7 +41,7 @@ class LidarOctreeCreator
 	public:
 	typedef std::vector<TempOctree*> TempOctreeList; // Type for lists of temporary octrees
 	private:
-	typedef Misc::LargeFile File; // Type for temporary files used during octree creation
+	typedef IO::StandardFile TempFile; // Type for temporary files used during octree creation
 	
 	struct Node // Structure for octree nodes during creation
 		{
@@ -51,7 +51,7 @@ class LidarOctreeCreator
 		Scalar detailSize; // Detail size of this node (distance between nearest neighbors)
 		unsigned int numPoints; // Number of points belonging to this node
 		LidarPoint* points; // Pointer to the points belonging to this node
-		File::Offset pointsOffset; // Offset of the node's point set in the temporary point file
+		TempFile::Offset pointsOffset; // Offset of the node's point set in the temporary point file
 		LidarFile::Offset octreeNodeOffset; // Offset of node's structure data in the resulting octree file
 		LidarFile::Offset octreeDataOffset; // Offset of node's point and ancillary data in the resulting octree file, in units of data record size
 		
@@ -72,7 +72,7 @@ class LidarOctreeCreator
 		{
 		/* Elements: */
 		public:
-		File* file; // Pointer to the temporary point file
+		TempFile* file; // Pointer to the temporary point file
 		std::string fileName; // Name of the temporary point file
 		
 		/* Constructors and destructors: */
@@ -107,7 +107,7 @@ class LidarOctreeCreator
 	void createSubTree(Node& node,const Cube& nodeDomain,unsigned int level);
 	void createSubTreeWithPoints(Node& node,const Cube& nodeDomain,LidarPoint* points,size_t numPoints,unsigned int level);
 	void calcFileOffsets(Node& node,unsigned int level,LidarFile::Offset& octreeFilePos,LidarFile::Offset& dataFilePos);
-	void writeSubtree(const Node& node,unsigned int level,File& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer);
+	void writeSubtree(const Node& node,unsigned int level,TempFile& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer);
 	
 	/* Constructors and destructors: */
 	public:

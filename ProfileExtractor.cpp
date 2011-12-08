@@ -1,7 +1,7 @@
 /***********************************************************************
 ProfileExtractor - Algorithm to extract straight-line profiles from 2.5D
 LiDAR data.
-Copyright (c) 2010 Oliver Kreylos
+Copyright (c) 2010-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,7 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "ProfileExtractor.h"
 
 #include <vector>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <SceneGraph/GroupNode.h>
 #include <SceneGraph/ColorNode.h>
 #include <SceneGraph/CoordinateNode.h>
@@ -113,7 +113,7 @@ class Sampler // Class to sample the implicit surface defined by a LiDAR point c
 		}
 	};
 
-void extractProfile(const LidarOctree* octree,const Point& p0,const Point& p1,double segmentLength,int oversampling,double filterWidth,int numLobes,Comm::MulticastPipe* pipe)
+void extractProfile(const LidarOctree* octree,const Point& p0,const Point& p1,double segmentLength,int oversampling,double filterWidth,int numLobes,Cluster::MulticastPipe* pipe)
 	{
 	std::vector<Point> profilePoints;
 	
@@ -176,7 +176,7 @@ void extractProfile(const LidarOctree* octree,const Point& p0,const Point& p1,do
 			pipe->write<unsigned int>(profilePoints.size());
 			for(std::vector<Point>::iterator ppIt=profilePoints.begin();ppIt!=profilePoints.end();++ppIt)
 				pipe->write<Point::Scalar>(ppIt->getComponents(),3);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else

@@ -16,11 +16,11 @@
 typedef Geometry::Point<double,3> Point;
 typedef Geometry::Vector<double,3> Vector;
 
-void processFile(const char* fileName,const std::vector<int> extractIndices,IO::File* outputFile)
+void processFile(const char* fileName,const std::vector<int> extractIndices,IO::FilePtr outputFile)
 	{
 	/* Open the primitive file: */
-	IO::AutoFile file(IO::openFile(fileName));
-	file->setEndianness(IO::File::LittleEndian);
+	IO::FilePtr file(IO::openFile(fileName));
+	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the file header: */
 	char header[40];
@@ -189,7 +189,7 @@ void processFile(const char* fileName,const std::vector<int> extractIndices,IO::
 int main(int argc,char* argv[])
 	{
 	/* Process the command line: */
-	IO::File* outputFile=0;
+	IO::FilePtr outputFile;
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -197,7 +197,6 @@ int main(int argc,char* argv[])
 			if(strcasecmp(argv[i]+1,"o")==0)
 				{
 				/* Close the previous output file: */
-				delete outputFile;
 				outputFile=0;
 				
 				/* Open a new output file: */
@@ -205,14 +204,13 @@ int main(int argc,char* argv[])
 				try
 					{
 					outputFile=IO::openFile(argv[i],IO::File::WriteOnly);
-					outputFile->setEndianness(IO::File::LittleEndian);
+					outputFile->setEndianness(Misc::LittleEndian);
 					char header[40]="LidarViewer primitive file v1.2       \n";
 					outputFile->write<char>(header,sizeof(header));
 					}
 				catch(std::runtime_error err)
 					{
 					std::cerr<<"Could not create output file "<<argv[i]<<" due to exception "<<err.what()<<std::endl;
-					delete outputFile;
 					outputFile=0;
 					}
 				}
@@ -232,9 +230,6 @@ int main(int argc,char* argv[])
 			processFile(fileName,extractIndices,outputFile);
 			}
 		}
-	
-	/* Close the last output file: */
-	delete outputFile;
 	
 	return 0;
 	}

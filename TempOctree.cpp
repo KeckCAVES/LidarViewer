@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -21,15 +21,17 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
+#include "TempOctree.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <iostream>
 #include <Misc/Utility.h>
+#include <Misc/ThrowStdErr.h>
 
 #include "SplitPoints.h"
-
-#include "TempOctree.h"
 
 /*********************************
 Methods of class TempOctree::Node:
@@ -106,7 +108,7 @@ void TempOctree::createSubTree(TempOctree::Node& node,LidarPoint* points,size_t 
 		{
 		/* Make this node a leaf and write the points to the temporary file: */
 		node.numPoints=numPoints;
-		node.pointsOffset=file.tell();
+		node.pointsOffset=file.getWritePos();
 		file.write(points,numPoints);
 		}
 	else
@@ -166,7 +168,7 @@ void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOct
 	else if(stat==Cube::CONTAINS)
 		{
 		/* Add all points in this node to the list: */
-		file.seekSet(node.pointsOffset);
+		file.setReadPosAbs(node.pointsOffset);
 		for(unsigned int i=0;i<node.numPoints;++i)
 			{
 			LidarPoint lp=file.read<LidarPoint>();
@@ -176,7 +178,7 @@ void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOct
 	else
 		{
 		/* Add only those points in this node to the list that are inside the cube: */
-		file.seekSet(node.pointsOffset);
+		file.setReadPosAbs(node.pointsOffset);
 		for(unsigned int i=0;i<node.numPoints;++i)
 			{
 			LidarPoint lp=file.read<LidarPoint>();
@@ -186,9 +188,32 @@ void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOct
 		}
 	}
 
+namespace {
+
+/****************
+Helper functions:
+****************/
+
+int createTempFile(char* fileNameTemplate)
+	{
+	/* Create the temporary file: */
+	int result=mkstemp(fileNameTemplate);
+	
+	/* Check for errors: */
+	if(result<0)
+		{
+		int error=errno;
+		Misc::throwStdErr("TempOctree::TempOctree: Error %d while creating temporary octree file %s",error,fileNameTemplate);
+		}
+	
+	return result;
+	}
+
+}
+
 TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,LidarPoint* points,size_t numPoints)
 	:tempFileName(new char[strlen(fileNameTemplate)+1]),
-	 file(mkstemp(fileNameTemplate),"w+b",File::DontCare),
+	 file(createTempFile(fileNameTemplate),File::ReadWrite),
 	 maxNumPointsPerNode(sMaxNumPointsPerNode),
 	 pointBbox(Box::empty)
 	{
@@ -223,6 +248,7 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 	
 	/* Create the root node's subtree: */
 	createSubTree(root,points,numPoints);
+	file.flush();
 	}
 
 TempOctree::~TempOctree(void)

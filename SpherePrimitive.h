@@ -1,6 +1,6 @@
 /***********************************************************************
 SpherePrimitive - Class for spheres extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -30,7 +30,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "PointPrimitive.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 class LidarOctree;
@@ -56,8 +56,8 @@ class SpherePrimitive:public PointPrimitive,public GLObject
 	
 	/* Constructors and destructors: */
 	public:
-	SpherePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates sphere by processing selected points from the given octree; writes result to given pipe if !=0
-	SpherePrimitive(Comm::MulticastPipe* pipe); // Creates sphere by reading sphere data from given pipe
+	SpherePrimitive(const LidarOctree* octree,const Vector& translation,Cluster::MulticastPipe* pipe); // Creates sphere by processing selected points from the given octree; writes result to given pipe if !=0
+	SpherePrimitive(Cluster::MulticastPipe* pipe); // Creates sphere by reading sphere data from given pipe
 	SpherePrimitive(IO::File& file,const Vector& translation); // Reads a sphere primitive from a binary file
 	
 	/* Methods: */

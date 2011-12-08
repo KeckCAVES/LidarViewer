@@ -1,6 +1,6 @@
 /***********************************************************************
 CylinderPrimitive - Class for cylinders extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/ThrowStdErr.h>
 #include <IO/File.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Math/Math.h>
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
@@ -57,7 +57,7 @@ CylinderPrimitive::DataItem::~DataItem(void)
 Methods of class CylinderPrimitive:
 **********************************/
 
-CylinderPrimitive::CylinderPrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
+CylinderPrimitive::CylinderPrimitive(const LidarOctree* octree,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Extract all selected points from the octree: */
 	LidarSelectionExtractor<CylinderFitter::Point> lse;
@@ -111,7 +111,9 @@ CylinderPrimitive::CylinderPrimitive(const LidarOctree* octree,Comm::MulticastPi
 		
 		/* Print the cylinder's equation: */
 		std::cout<<"Cylinder fitting "<<numPoints<<" points"<<std::endl;
-		std::cout<<"Center point: ("<<center[0]<<", "<<center[1]<<", "<<center[2]<<")"<<std::endl;
+		Point tCenter=center;
+		tCenter+=translation;
+		std::cout<<"Center point: ("<<tCenter[0]<<", "<<tCenter[1]<<", "<<tCenter[2]<<")"<<std::endl;
 		std::cout<<"Axis direction: ("<<axis[0]<<", "<<axis[1]<<", "<<axis[2]<<")"<<std::endl;
 		std::cout<<"Radius: "<<radius<<", height: "<<length<<std::endl;
 		std::cout<<"RMS approximation residual: "<<rms<<std::endl;
@@ -141,7 +143,7 @@ CylinderPrimitive::CylinderPrimitive(const LidarOctree* octree,Comm::MulticastPi
 			pipe->write<Scalar>(length);
 			pipe->write<int>(numX);
 			pipe->write<int>(numY);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -149,13 +151,13 @@ CylinderPrimitive::CylinderPrimitive(const LidarOctree* octree,Comm::MulticastPi
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("CylinderPrimitive::CylinderPrimitive: Not enough selected points");
 		}
 	}
 
-CylinderPrimitive::CylinderPrimitive(Comm::MulticastPipe* pipe)
+CylinderPrimitive::CylinderPrimitive(Cluster::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())

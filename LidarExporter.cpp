@@ -120,8 +120,8 @@ int main(int argc,char* argv[])
 		Box lbox;
 		for(int i=0;i<3;++i)
 			{
-			lbox.min[i]=Box::Scalar(box[i]-lpo.getOffset()[0]);
-			lbox.max[i]=Box::Scalar(box[3+i]-lpo.getOffset()[0]);
+			lbox.min[i]=Box::Scalar(box[i]-lpo.getOffset()[i]);
+			lbox.max[i]=Box::Scalar(box[3+i]-lpo.getOffset()[i]);
 			lpo.processPointsInBox(lbox,ps);
 			}
 		}

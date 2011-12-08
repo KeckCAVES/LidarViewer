@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor class to calculate a normal vector for a
 point in a LiDAR data set.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iomanip>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
 #include <Math/Math.h>
 
 #include "NormalCalculator.h"
@@ -34,7 +33,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 Methods of class NormalCalculator:
 *********************************/
 
-NormalCalculator::Plane::Vector NormalCalculator::calcEigenvector(const NormalCalculator::Matrix& cov,double eigenvalue) const
+NormalCalculator::Plane::Vector NormalCalculator::calcEigenvector(const NormalCalculator::Matrix& cov,double eigenvalue)
 	{
 	/* Create the modified covariance matrix: */
 	Matrix c=cov;
@@ -109,37 +108,13 @@ NormalCalculator::Plane::Vector NormalCalculator::calcEigenvector(const NormalCa
 	return result;
 	}
 
-NormalCalculator::NormalCalculator(const Point& sQueryPoint,Scalar sRadius2)
-	:queryPoint(sQueryPoint),
-	 radius2(sRadius2),
-	 pxpxs(0.0),pxpys(0.0),pxpzs(0.0),pypys(0.0),pypzs(0.0),pzpzs(0.0),pxs(0.0),pys(0.0),pzs(0.0),
-	 numPoints(0)
+NormalCalculator::Plane::Vector NormalCalculator::calcNormal(const NormalCalculator::Matrix& cov)
 	{
-	}
-
-NormalCalculator::Plane NormalCalculator::calcPlane(void) const
-	{
-	if(numPoints<3)
-		Misc::throwStdErr("PlaneFitter::calcPlane: Too few processed points, have %u instead of 3",numPoints);
-	
-	/* Calculate the processed points' covariance matrix: */
-	double np=double(numPoints);
-	Matrix c;
-	c(0,0)=(pxpxs-pxs*pxs/np)/np;
-	c(0,1)=(pxpys-pxs*pys/np)/np;
-	c(0,2)=(pxpzs-pxs*pzs/np)/np;
-	c(1,0)=c(0,1);
-	c(1,1)=(pypys-pys*pys/np)/np;
-	c(1,2)=(pypzs-pys*pzs/np)/np;
-	c(2,0)=c(0,2);
-	c(2,1)=c(1,2);
-	c(2,2)=(pzpzs-pzs*pzs/np)/np;
-	
 	/* Calculate the coefficients of the covariance matrix' characteristic polynomial: */
 	double cp[3];
-	cp[0]=-c(0,0)-c(1,1)-c(2,2);
-	cp[1]=c(0,0)*c(1,1)+c(0,0)*c(2,2)+c(1,1)*c(2,2)-c(0,1)*c(1,0)-c(0,2)*c(2,0)-c(1,2)*c(2,1);
-	cp[2]=-c(0,0)*(c(1,1)*c(2,2)-c(1,2)*c(2,1))+c(0,1)*(c(1,0)*c(2,2)-c(1,2)*c(2,0))-c(0,2)*(c(1,0)*c(2,1)-c(1,1)*c(2,0));
+	cp[0]=-cov(0,0)-cov(1,1)-cov(2,2);
+	cp[1]=cov(0,0)*cov(1,1)+cov(0,0)*cov(2,2)+cov(1,1)*cov(2,2)-cov(0,1)*cov(1,0)-cov(0,2)*cov(2,0)-cov(1,2)*cov(2,1);
+	cp[2]=-cov(0,0)*(cov(1,1)*cov(2,2)-cov(1,2)*cov(2,1))+cov(0,1)*(cov(1,0)*cov(2,2)-cov(1,2)*cov(2,0))-cov(0,2)*(cov(1,0)*cov(2,1)-cov(1,1)*cov(2,0));
 	
 	/* Find all roots of the characteristic polynomial: */
 	double roots[3];
@@ -185,337 +160,219 @@ NormalCalculator::Plane NormalCalculator::calcPlane(void) const
 		Misc::swap(roots[0],roots[1]);
 	
 	/* Calculate the smallest eigenvector: */
-	Plane::Vector normal=calcEigenvector(c,roots[2]);
+	return calcEigenvector(cov,roots[2]);
+	}
+
+/***************************************
+Methods of class RadiusNormalCalculator:
+***************************************/
+
+RadiusNormalCalculator::RadiusNormalCalculator(Scalar sRadius)
+	:radius2(Math::sqr(sRadius))
+	{
+	}
+
+void RadiusNormalCalculator::prepare(const Point& newQueryPoint)
+	{
+	/* Copy the query point: */
+	queryPoint=newQueryPoint;
 	
-	/* Calculate the processed points' centroid: */
-	Plane::Point centroid=Plane::Point(pxs/np,pys/np,pzs/np);
+	/* Reset the PCA accumulator: */
+	pxpxs=0.0;
+	pxpys=0.0;
+	pxpzs=0.0;
+	pypys=0.0;
+	pypzs=0.0;
+	pzpzs=0.0;
+	pxs=0.0;
+	pys=0.0;
+	pzs=0.0;
+	numPoints=0;
+	}
+
+NormalCalculator::Plane RadiusNormalCalculator::calcPlane(void) const
+	{
+	if(numPoints<3)
+		Misc::throwStdErr("RadiusNormalCalculator::calcPlane: Too few processed points, have %u instead of 3",numPoints);
+	
+	/* Calculate the processed points' covariance matrix: */
+	double np=double(numPoints);
+	Matrix c;
+	c(0,0)=(pxpxs-pxs*pxs/np)/np;
+	c(0,1)=(pxpys-pxs*pys/np)/np;
+	c(0,2)=(pxpzs-pxs*pzs/np)/np;
+	c(1,0)=c(0,1);
+	c(1,1)=(pypys-pys*pys/np)/np;
+	c(1,2)=(pypzs-pys*pzs/np)/np;
+	c(2,0)=c(0,2);
+	c(2,1)=c(1,2);
+	c(2,2)=(pzpzs-pzs*pzs/np)/np;
 	
 	/* Return the plane equation: */
-	return Plane(normal,centroid);
+	return Plane(calcNormal(c),Plane::Point(pxs/np,pys/np,pzs/np));
 	}
 
-namespace {
+/*********************************************
+Methods of class NumberRadiusNormalCalculator:
+*********************************************/
 
-/**************
-Helper classes:
-**************/
-
-class FindPoint // Class to find a point inside an octree node
+NumberRadiusNormalCalculator::NumberRadiusNormalCalculator(unsigned int sMaxNumNeighbors)
+	:maxNumNeighbors(sMaxNumNeighbors),maxDist2(Math::Constants<Scalar>::max),
+	 neighbors(new Neighbor[maxNumNeighbors])
 	{
-	/* Elements: */
-	private:
-	Point queryPoint; // The position of the point to find
-	const LidarPoint* foundPoint; // The found LiDAR point
-	
-	/* Constructors and destructors: */
-	public:
-	FindPoint(const Point& sQueryPoint)
-		:queryPoint(sQueryPoint),
-		 foundPoint(0)
-		{
-		}
-	
-	/* Methods: */
-	void operator()(const LidarPoint& lp)
-		{
-		if(Geometry::sqrDist(lp,queryPoint)==Scalar(0))
-			foundPoint=&lp;
-		}
-	const Point& getQueryPoint(void) const
-		{
-		return queryPoint;
-		}
-	Scalar getQueryRadius2(void) const
-		{
-		return Scalar(0);
-		}
-	const LidarPoint* getFoundPoint(void) const
-		{
-		return foundPoint;
-		}
-	};
+	}
 
-class NormalAverager // Class to average normal vectors of collapsed points during subsampling
+NumberRadiusNormalCalculator::NumberRadiusNormalCalculator(unsigned int sMaxNumNeighbors,Scalar sMaxDist)
+	:maxNumNeighbors(sMaxNumNeighbors),maxDist2(Math::sqr(sMaxDist)),
+	 neighbors(new Neighbor[maxNumNeighbors])
 	{
-	/* Elements: */
-	private:
-	Point queryPoint; // The LiDAR point whose neighbors to find
-	Scalar radius2; // Squared radius of search sphere around query point
-	const Vector& pointNormal; // Normal vector onto which to project near normals before averaging
-	const LidarPoint* pointBase; // Base pointer of processed node's point array
-	const Vector* normalBase; // Base pointer of processed node's normal vector array
-	Vector normal; // The averaged normal vector
-	
-	/* Constructors and destructors: */
-	public:
-	NormalAverager(const Point& sQueryPoint,Scalar sRadius2,const Vector& sPointNormal)
-		:queryPoint(sQueryPoint),
-		 radius2(sRadius2),
-		 pointNormal(sPointNormal),
-		 pointBase(0),normalBase(0),
-		 normal(Vector::zero)
+	}
+
+NumberRadiusNormalCalculator::NumberRadiusNormalCalculator(const NumberRadiusNormalCalculator& source)
+	:maxNumNeighbors(source.maxNumNeighbors),maxDist2(source.maxDist2),
+	 neighbors(new Neighbor[maxNumNeighbors]),
+	 currentNumNeighbors(source.currentNumNeighbors),currentMaxDist2(source.currentMaxDist2)
+	{
+	/* Copy the source's neighbor heap: */
+	for(unsigned int i=0;i<maxNumNeighbors;++i)
+		neighbors[i]=source.neighbors[i];
+	}
+
+NumberRadiusNormalCalculator& NumberRadiusNormalCalculator::operator=(const NumberRadiusNormalCalculator& source)
+	{
+	if(this!=&source)
 		{
-		}
-	
-	/* Methods: */
-	void setArrays(const LidarPoint* sPointBase,const Vector* sNormalBase) // Sets the point and normal vector arrays for the next process
-		{
-		pointBase=sPointBase;
-		normalBase=sNormalBase;
-		}
-	void operator()(const LidarPoint& lp)
-		{
-		/* Check if the point is inside the search radius: */
-		if(Geometry::sqrDist(lp,queryPoint)<=radius2)
+		if(maxNumNeighbors!=source.maxNumNeighbors)
 			{
-			/* Get the point's normal vector by mapping its index into the normal array: */
-			const Vector& nearNormal=normalBase[&lp-pointBase];
-			
-			/* Accumulate the result normal: */
-			if(nearNormal*pointNormal>=Scalar(0))
-				normal+=nearNormal;
-			else
-				normal-=nearNormal;
+			maxNumNeighbors=source.maxNumNeighbors;
+			delete[] neighbors;
+			neighbors=new Neighbor[maxNumNeighbors];
 			}
-		}
-	const Point& getQueryPoint(void) const
-		{
-		return queryPoint;
-		}
-	Scalar getQueryRadius2(void) const
-		{
-		return radius2;
-		}
-	const Vector& getNormal(void) const // Returns the averaged normal vector
-		{
-		return normal;
-		}
-	};
-
-}
-
-/*************************************
-Methods of class NodeNormalCalculator:
-*************************************/
-
-void* NodeNormalCalculator::calcThreadMethod(unsigned int threadIndex)
-	{
-	Threads::Thread::setCancelState(Threads::Thread::CANCEL_ENABLE);
-	
-	while(true)
-		{
-		/* Wait on the calculation barrier until there is a job: */
-		calcBarrier.synchronize();
-		if(shutdownThreads)
-			break;
+		maxDist2=source.maxDist2;
+		currentNumNeighbors=source.currentNumNeighbors;
+		currentMaxDist2=source.currentMaxDist2;
 		
-		/* Process the current node: */
-		unsigned int firstI=(threadIndex*currentNode->getNumPoints())/numThreads;
-		unsigned int lastI=((threadIndex+1)*currentNode->getNumPoints())/numThreads;
-		for(unsigned int i=firstI;i<lastI;++i)
+		/* Copy the source's neighbor heap: */
+		for(unsigned int i=0;i<maxNumNeighbors;++i)
+			neighbors[i]=source.neighbors[i];
+		}
+	return *this;
+	}
+
+NumberRadiusNormalCalculator::~NumberRadiusNormalCalculator(void)
+	{
+	delete[] neighbors;
+	}
+
+void NumberRadiusNormalCalculator::operator()(const LidarPoint& point)
+	{
+	Scalar dist2=Geometry::sqrDist(point,queryPoint);
+	if(dist2<currentMaxDist2)
+		{
+		if(currentNumNeighbors<maxNumNeighbors)
 			{
-			/* Create a plane fitter for the point: */
-			NormalCalculator normalCalculator((*currentNode)[i],radius2);
-			
-			/* Process the point's neighborhood: */
-			lpo.processPointsDirected(normalCalculator);
-			
-			/* Get the point's normal vector: */
-			if(normalCalculator.getNumPoints()>=3)
+			/* Insert the new point into the heap: */
+			unsigned int insertionPos=currentNumNeighbors;
+			while(insertionPos>0)
 				{
-				/* Get the fitted plane's normal vector: */
-				normalBuffer[i]=normalCalculator.calcPlane().getNormal();
+				unsigned int parent=(insertionPos-1)>>1;
+				if(neighbors[parent].dist2>=dist2)
+					break;
+				neighbors[insertionPos]=neighbors[parent];
+				insertionPos=parent;
 				}
-			else
+			neighbors[insertionPos].point=point;
+			neighbors[insertionPos].dist2=dist2;
+			
+			/* Increment the current neighborhood size and check if it became full: */
+			++currentNumNeighbors;
+			if(currentNumNeighbors==maxNumNeighbors)
+				currentMaxDist2=neighbors[0].dist2;
+			}
+		else
+			{
+			/* Replace the currently farthest-away neighbor in the heap: */
+			unsigned int insertionPos=0;
+			while(true)
 				{
-				/* Solitary point; assign dummy normal vector: */
-				normalBuffer[i]=Vector::zero;
-				
-				if(saveOutliers)
+				unsigned int biggestIndex=insertionPos;
+				Scalar biggest=dist2;
+				unsigned int child=(insertionPos<<1);
+				for(int i=0;i<2;++i)
 					{
-					Threads::Mutex::Lock outlierLock(outlierMutex);
-					outliers[numOutliers]=(*currentNode)[i];
-					++numOutliers;
+					++child;
+					if(child<maxNumNeighbors&&neighbors[child].dist2>biggest)
+						{
+						biggestIndex=child;
+						biggest=neighbors[child].dist2;
+						}
 					}
+				if(biggestIndex==insertionPos)
+					break;
+				neighbors[insertionPos]=neighbors[biggestIndex];
+				insertionPos=biggestIndex;
 				}
-			}
-		
-		/* Synchronize on the calculation barrier to signal job completion: */
-		calcBarrier.synchronize();
-		}
-	
-	return 0;
-	}
-
-void* NodeNormalCalculator::subsampleThreadMethod(unsigned int threadIndex)
-	{
-	Threads::Thread::setCancelState(Threads::Thread::CANCEL_ENABLE);
-	
-	while(true)
-		{
-		/* Wait on the subsampling barrier until there is a job: */
-		subsampleBarrier.synchronize();
-		if(shutdownThreads)
-			break;
-		
-		/* Find the points that were collapsed onto each node point and average their normal vectors: */
-		Scalar averageRadius2=Math::sqr(currentNode->getDetailSize()*Scalar(1.5));
-		unsigned int firstI=(threadIndex*currentNode->getNumPoints())/numThreads;
-		unsigned int lastI=((threadIndex+1)*currentNode->getNumPoints())/numThreads;
-		for(unsigned int i=firstI;i<lastI;++i)
-			{
-			/*****************************************************************
-			Find the exact normal vector of this point's "ancestor" to
-			properly average normals:
-			*****************************************************************/
+			neighbors[insertionPos].point=point;
+			neighbors[insertionPos].dist2=dist2;
 			
-			/* Find the child node containing this point's ancestor: */
-			int pointChildIndex=currentNode->getDomain().findChild((*currentNode)[i]);
-			LidarProcessOctree::Node* pointChild=currentChildren[pointChildIndex];
-			
-			/* Find the point's ancestor: */
-			FindPoint fp((*currentNode)[i]);
-			lpo.processNodePointsDirected(pointChild,fp);
-			if(fp.getFoundPoint()==0)
-				Misc::throwStdErr("Things are fucked up!");
-			
-			/* Retrieve the ancestor's normal vector: */
-			const Vector& pointNormal=childNormalBuffers[pointChildIndex][fp.getFoundPoint()-pointChild->getPoints()];
-			
-			/* Create a functor to average normal vectors from the point's neighborhood: */
-			NormalAverager normalAverager((*currentNode)[i],averageRadius2,pointNormal);
-			for(int childIndex=0;childIndex<8;++childIndex)
-				{
-				/* Check if the child node's domain overlaps the search sphere: */
-				if(currentChildren[childIndex]->getDomain().sqrDist((*currentNode)[i])<=averageRadius2)
-					{
-					/* Search for neighbors in this child node: */
-					normalAverager.setArrays(currentChildren[childIndex]->getPoints(),childNormalBuffers[childIndex]);
-					lpo.processNodePointsDirected(currentChildren[childIndex],normalAverager);
-					}
-				}
-			
-			/* Store the averaged normal vector: */
-			normalBuffer[i]=normalAverager.getNormal();
-			if(normalBuffer[i]!=Vector::zero)
-				normalBuffer[i].normalize();
-			}
-		
-		/* Synchronize on the subsampling barrier to signal job completion: */
-		subsampleBarrier.synchronize();
-		}
-	
-	return 0;
-	}
-
-NodeNormalCalculator::NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName,unsigned int sNumThreads)
-	:lpo(sLpo),
-	 radius2(Math::sqr(sRadius)),
-	 normalBuffer(new Vector[lpo.getMaxNumPointsPerNode()]),
-	 normalDataSize(sizeof(Scalar)*3),
-	 normalFile(normalFileName,"w+b",LidarFile::LittleEndian),
-	 saveOutliers(false),numOutliers(0),outliers(0),outlierFile(0),
-	 numThreads(sNumThreads),shutdownThreads(false),
-	 calcThreads(new Threads::Thread[numThreads]),calcBarrier(numThreads+1),
-	 subsampleThreads(new Threads::Thread[numThreads]),subsampleBarrier(numThreads+1),
-	 currentNode(0),
-	 numProcessedNodes(0)
-	{
-	/* Create the child normal buffers: */
-	for(int i=0;i<8;++i)
-		childNormalBuffers[i]=new Vector[lpo.getMaxNumPointsPerNode()];
-	
-	/* Write the normal file's header: */
-	LidarDataFileHeader dfh((unsigned int)(normalDataSize));
-	dfh.write(normalFile);
-	
-	/* Start the worker threads: */
-	for(unsigned int i=0;i<numThreads;++i)
-		{
-		calcThreads[i].start(this,&NodeNormalCalculator::calcThreadMethod,i);
-		subsampleThreads[i].start(this,&NodeNormalCalculator::subsampleThreadMethod,i);
-		}
-	}
-
-NodeNormalCalculator::~NodeNormalCalculator(void)
-	{
-	/* Shut down all threads: */
-	shutdownThreads=true;
-	calcBarrier.synchronize();
-	subsampleBarrier.synchronize();
-	for(unsigned int i=0;i<numThreads;++i)
-		{
-		calcThreads[i].join();
-		subsampleThreads[i].join();
-		}
-	delete[] calcThreads;
-	delete[] subsampleThreads;
-	
-	/* Delete all buffers: */
-	delete[] normalBuffer;
-	for(int i=0;i<8;++i)
-		delete[] childNormalBuffers[i];
-	
-	delete[] outliers;
-	delete outlierFile;
-	}
-
-void NodeNormalCalculator::saveOutlierPoints(const char* outlierFileName)
-	{
-	saveOutliers=true;
-	numOutliers=0;
-	outliers=new Point[lpo.getMaxNumPointsPerNode()];
-	outlierFile=new Misc::File(outlierFileName,"wt");
-	}
-
-void NodeNormalCalculator::operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel)
-	{
-	currentNode=&node;
-	
-	/* Check if this node is a leaf or an interior node: */
-	if(node.isLeaf())
-		{
-		/* Wake up the calculation threads: */
-		calcBarrier.synchronize();
-		
-		/* Wait for their completion: */
-		calcBarrier.synchronize();
-		
-		if(saveOutliers)
-			{
-			/* Write all outlier points to the file: */
-			for(size_t i=0;i<numOutliers;++i)
-				fprintf(outlierFile->getFilePtr(),"%.6f %.6f %.6f\n",outliers[i][0],outliers[i][1],outliers[i][2]);
-			
-			numOutliers=0;
+			/* Update the current neighborhood radius: */
+			currentMaxDist2=neighbors[0].dist2;
 			}
 		}
-	else
+	}
+
+void NumberRadiusNormalCalculator::prepare(const Point& newQueryPoint)
+	{
+	/* Copy the query point: */
+	queryPoint=newQueryPoint;
+	
+	/* Reset the neighborhood collector: */
+	currentNumNeighbors=0;
+	currentMaxDist2=maxDist2;
+	}
+
+NormalCalculator::Plane NumberRadiusNormalCalculator::calcPlane(void) const
+	{
+	if(currentNumNeighbors<3)
+		Misc::throwStdErr("NumberRadiusNormalCalculator::calcPlane: Too few processed points, have %u instead of 3",currentNumNeighbors);
+	
+	/* Calculate the processed points' covariance matrix: */
+	double pxpxs=0.0;
+	double pxpys=0.0;
+	double pxpzs=0.0;
+	double pypys=0.0;
+	double pypzs=0.0;
+	double pzpzs=0.0;
+	double pxs=0.0;
+	double pys=0.0;
+	double pzs=0.0;
+	for(unsigned int i=0;i<currentNumNeighbors;++i)
 		{
-		/* Get pointers to the node's children and load their normal vector arrays: */
-		for(int childIndex=0;childIndex<8;++childIndex)
-			{
-			currentChildren[childIndex]=lpo.getChild(currentNode,childIndex);
-			if(currentChildren[childIndex]->getNumPoints()>0)
-				{
-				normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*currentChildren[childIndex]->getDataOffset());
-				normalFile.read(childNormalBuffers[childIndex],currentChildren[childIndex]->getNumPoints());
-				}
-			}
-		
-		/* Wake up the subsampling threads: */
-		subsampleBarrier.synchronize();
-		
-		/* Wait for their completion: */
-		subsampleBarrier.synchronize();
+		/* Accumulate the neighbor: */
+		const Point& lp=neighbors[i].point;
+		pxpxs+=double(lp[0])*double(lp[0]);
+		pxpys+=double(lp[0])*double(lp[1]);
+		pxpzs+=double(lp[0])*double(lp[2]);
+		pypys+=double(lp[1])*double(lp[1]);
+		pypzs+=double(lp[1])*double(lp[2]);
+		pzpzs+=double(lp[2])*double(lp[2]);
+		pxs+=double(lp[0]);
+		pys+=double(lp[1]);
+		pzs+=double(lp[2]);
 		}
 	
-	/* Write the node's normal vectors to the normal file: */
-	normalFile.seekSet(LidarDataFileHeader::getFileSize()+normalDataSize*currentNode->getDataOffset());
-	normalFile.write(normalBuffer,currentNode->getNumPoints());
+	double np=double(currentNumNeighbors);
+	Matrix c;
+	c(0,0)=(pxpxs-pxs*pxs/np)/np;
+	c(0,1)=(pxpys-pxs*pys/np)/np;
+	c(0,2)=(pxpzs-pxs*pzs/np)/np;
+	c(1,0)=c(0,1);
+	c(1,1)=(pypys-pys*pys/np)/np;
+	c(1,2)=(pypzs-pys*pzs/np)/np;
+	c(2,0)=c(0,2);
+	c(2,1)=c(1,2);
+	c(2,2)=(pzpzs-pzs*pzs/np)/np;
 	
-	/* Update the progress counter: */
-	++numProcessedNodes;
-	int percent=int((numProcessedNodes*100+lpo.getNumNodes()/2)/lpo.getNumNodes());
-	std::cout<<"\b\b\b\b"<<std::setw(3)<<percent<<"%"<<std::flush;
+	/* Return the plane equation: */
+	return Plane(calcNormal(c),Plane::Point(pxs/np,pys/np,pzs/np));
 	}

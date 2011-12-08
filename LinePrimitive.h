@@ -1,7 +1,7 @@
 /***********************************************************************
 LinePrimitive - Class for lines extracted from point clouds by
 intersecting two plane primitives.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -30,7 +30,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "Primitive.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 class PlanePrimitive;
@@ -49,9 +49,9 @@ class LinePrimitive:public Primitive
 		{
 		};
 	public:
-	LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,Comm::MulticastPipe* pipe); // Creates line primitive by intersecting the two given plane primitives; writes result to given pipe if !=0
-	LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe); // Creates line by processing selected points from the given octree; writes result to given pipe if !=0
-	LinePrimitive(Comm::MulticastPipe* pipe); // Creates line by reading line data from given pipe
+	LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const Vector& translation,Cluster::MulticastPipe* pipe); // Creates line primitive by intersecting the two given plane primitives; writes result to given pipe if !=0
+	LinePrimitive(const LidarOctree* octree,Cluster::MulticastPipe* pipe); // Creates line by processing selected points from the given octree; writes result to given pipe if !=0
+	LinePrimitive(Cluster::MulticastPipe* pipe); // Creates line by reading line data from given pipe
 	LinePrimitive(IO::File& file,const Vector& translation); // Reads a line primitive from a binary file
 	
 	/* Methods: */

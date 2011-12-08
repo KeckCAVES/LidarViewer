@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2010 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -35,7 +35,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/ConfigurationFile.h>
 #include <IO/File.h>
 #include <IO/ValueSource.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Geometry/Vector.h>
 #include <Geometry/TranslationTransformation.h>
 #include <Geometry/OrthogonalTransformation.h>
@@ -63,6 +63,10 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/Popup.h>
 #include <GLMotif/PopupMenu.h>
 #include <GLMotif/PopupWindow.h>
+#include <SceneGraph/NodeCreator.h>
+#include <SceneGraph/VRMLFile.h>
+#include <SceneGraph/TransformNode.h>
+#include <SceneGraph/GLRenderState.h>
 #include <Vrui/GlyphRenderer.h>
 #include <Vrui/OrthogonalCoordinateTransform.h>
 #include <Vrui/Lightsource.h>
@@ -91,21 +95,77 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "LoadPointSet.h"
 #include "FallingSphereProcessor.h"
 
+/**************
+Helper classes:
+**************/
+
+namespace Misc {
+
+template <>
+class ValueCoder<LidarViewer::SelectorLocator::SelectorMode>
+	{
+	/* Methods: */
+	public:
+	static std::string encode(const LidarViewer::SelectorLocator::SelectorMode& value)
+		{
+		if(value==LidarViewer::SelectorLocator::ADD)
+			return "Add";
+		else
+			return "Subtract";
+		}
+	static LidarViewer::SelectorLocator::SelectorMode decode(const char* start,const char* end,const char** decodeEnd =0)
+		{
+		if(strncasecmp(start,"Add",end-start)==0)
+			{
+			if(decodeEnd!=0)
+				*decodeEnd=start+3;
+			return LidarViewer::SelectorLocator::ADD;
+			}
+		else if(strncasecmp(start,"Subtract",end-start)==0)
+			{
+			if(decodeEnd!=0)
+				*decodeEnd=start+8;
+			return LidarViewer::SelectorLocator::SUBTRACT;
+			}
+		else
+			throw DecodingError(Misc::printStdErrMsg("Could not convert %s to LidarViewer::SelectorLocator::SelectorMode",std::string(start,end).c_str()));
+		}
+	};
+
+}
+
 /*********************************************
 Methods of class LidarViewer::SelectorLocator:
 *********************************************/
 
-LidarViewer::SelectorLocator::SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication)
+LidarViewer::SelectorLocator::SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,Misc::ConfigurationFileSection* cfg)
 	:Locator(sTool,sApplication),
 	 influenceRadius(application->brushSize),
 	 selectorMode(application->defaultSelectorMode),
 	 ready(false),
 	 active(false)
 	{
+	if(cfg!=0)
+		{
+		/* Load tool settings from configuration file section: */
+		influenceRadius=cfg->retrieveValue<Vrui::Scalar>("./influenceRadius",influenceRadius);
+		selectorMode=cfg->retrieveValue<SelectorMode>("./selectorMode",selectorMode);
+		}
 	}
 
 LidarViewer::SelectorLocator::~SelectorLocator(void)
 	{
+	}
+
+void LidarViewer::SelectorLocator::storeState(Misc::ConfigurationFileSection& configFileSection) const
+	{
+	configFileSection.storeValue<Vrui::Scalar>("./influenceRadius",influenceRadius);
+	configFileSection.storeValue<SelectorMode>("./selectorMode",selectorMode);
+	}
+
+void LidarViewer::SelectorLocator::getName(std::string& name) const
+	{
+	name="Select Points";
 	}
 
 void LidarViewer::SelectorLocator::motionCallback(Vrui::LocatorTool::MotionCallbackData* cbData)
@@ -172,8 +232,9 @@ void LidarViewer::SelectorLocator::glRenderAction(GLContextData& contextData) co
 Methods of class LidarViewer::DataItem:
 **************************************/
 
-LidarViewer::DataItem::DataItem(void)
-	:influenceSphereDisplayListId(glGenLists(1))
+LidarViewer::DataItem::DataItem(GLContextData& contextData)
+	:influenceSphereDisplayListId(glGenLists(1)),
+	 pbls(Vrui::getLightsourceManager()->getLightTracker(contextData))
 	{
 	glGenTextures(1,&planeColorMapTextureId);
 	}
@@ -722,7 +783,8 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 primitiveColor(0.5f,0.5f,0.1f,0.5f),
 	 selectedPrimitiveColor(0.1f,0.5f,0.5f,0.5f),
 	 lastPickedPrimitive(-1),
-	 mainMenu(0),renderDialog(0)
+	 mainMenu(0),renderDialog(0),interactionDialog(0),
+	 sceneGraphRoot(0)
 	{
 	memCacheSize=512;
 	unsigned int gfxCacheSize=128;
@@ -803,6 +865,22 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 				pointBasedLighting=true;
 			else if(strcasecmp(argv[i]+1,"usePointColors")==0)
 				usePointColors=true;
+			else if(strcasecmp(argv[i]+1,"sceneGraph")==0)
+				{
+				if(i+1<argc)
+					{
+					++i;
+					
+					/* Create a root node if there is none yet: */
+					if(sceneGraphRoot==0)
+						sceneGraphRoot=new SceneGraph::TransformNode;
+					
+					/* Load the scene graph file: */
+					SceneGraph::NodeCreator nodeCreator;
+					SceneGraph::VRMLFile vrmlFile(argv[i],Vrui::openFile(argv[i]),nodeCreator,Vrui::getClusterMultiplexer());
+					vrmlFile.parse(sceneGraphRoot);
+					}
+				}
 			}
 		else
 			{
@@ -840,8 +918,7 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		if(Misc::isFileReadable(unitFileName.c_str()))
 			{
 			/* Read the unit file: */
-			IO::AutoFile unitFile(Vrui::openFile(unitFileName.c_str()));
-			IO::ValueSource unit(*unitFile);
+			IO::ValueSource unit(Vrui::openFile(unitFileName.c_str()));
 			unit.skipWs();
 			Vrui::Scalar unitFactor=Vrui::Scalar(unit.readNumber());
 			std::string unitName=unit.readString();
@@ -866,12 +943,19 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	if(Misc::isFileReadable(offsetFileName.c_str()))
 		{
 		/* Read the offset file: */
-		IO::AutoFile offsetFile(Vrui::openFile(offsetFileName.c_str()));
-		offsetFile->setEndianness(IO::File::LittleEndian);
+		IO::FilePtr offsetFile(Vrui::openFile(offsetFileName.c_str()));
+		offsetFile->setEndianness(Misc::LittleEndian);
 		for(int i=0;i<3;++i)
 			offset[i]-=offsetFile->read<double>();
 		}
 	Vrui::getCoordinateManager()->setCoordinateTransform(new Vrui::OrthogonalCoordinateTransform(Vrui::OGTransform::translate(-offset)));
+	
+	/* Apply the transformation to any additional scene graphs: */
+	if(sceneGraphRoot!=0)
+		{
+		sceneGraphRoot->translation.setValue(-offset);
+		sceneGraphRoot->update();
+		}
 	
 	/* Create the sun lightsource: */
 	sun=Vrui::getLightsourceManager()->createLightsource(false);
@@ -894,6 +978,9 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	Vrui::getToolManager()->addClass(lidarToolFactory,LidarToolFactory::factoryDestructor);
 	ProfileToolFactory* profileToolFactory=new ProfileToolFactory(*Vrui::getToolManager());
 	Vrui::getToolManager()->addClass(profileToolFactory,ProfileToolFactory::factoryDestructor);
+	
+	/* This object depends on Vrui's lightsource manager: */
+	dependsOn(Vrui::getLightsourceManager());
 	
 	/* Initialize the scene graph: */
 	createSceneGraph();
@@ -932,7 +1019,7 @@ LidarViewer::~LidarViewer(void)
 void LidarViewer::initContext(GLContextData& contextData) const
 	{
 	/* Create a new context entry: */
-	DataItem* dataItem=new DataItem;
+	DataItem* dataItem=new DataItem(contextData);
 	contextData.addDataItem(this,dataItem);
 	
 	/* Create the influence sphere display list: */
@@ -977,7 +1064,7 @@ void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackDa
 	if(ltool!=0)
 		{
 		/* Create new locator: */
-		Locator* newLocator=new SelectorLocator(ltool,this);
+		Locator* newLocator=new SelectorLocator(ltool,this,cbData->cfg);
 		
 		/* Add new locator to list: */
 		locators.push_back(newLocator);
@@ -996,7 +1083,7 @@ void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackDa
 	if(surfaceNavigationTool!=0)
 		{
 		/* Set the new tool's alignment function: */
-		surfaceNavigationTool->setAlignFunction(Misc::createFunctionCall<const Vrui::SurfaceNavigationTool::AlignmentData&,LidarViewer>(this,&LidarViewer::alignSurfaceFrame));
+		surfaceNavigationTool->setAlignFunction(Misc::createFunctionCall(this,&LidarViewer::alignSurfaceFrame));
 		}
 	}
 
@@ -1077,6 +1164,7 @@ void LidarViewer::display(GLContextData& contextData) const
 			glMaterial(GLMaterialEnums::FRONT_AND_BACK,GLMaterial(GLMaterial::Color(0.6f,0.6f,0.6f),GLMaterial::Color(0.4f,0.4f,0.4f),30.0f));
 		
 		/* Enable the point-based lighting shader: */
+		dataItem->pbls.setUsePointColors(usePointColors);
 		dataItem->pbls.enable();
 		}
 	else
@@ -1130,8 +1218,19 @@ void LidarViewer::display(GLContextData& contextData) const
 		}
 	glPopAttrib();
 	
-	/* Render the scene graph: */
+	/* Render LiDAR Viewer's own scene graph: */
 	renderSceneGraph(contextData);
+	
+	/* Render any additional scene graphs: */
+	if(sceneGraphRoot!=0)
+		{
+		glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_TEXTURE_BIT);
+
+		SceneGraph::GLRenderState renderState(contextData,Vrui::getHeadPosition(),Vrui::getNavigationTransformation().inverseTransform(Vrui::getUpDirection()));
+		sceneGraphRoot->glRenderAction(renderState);
+		
+		glPopAttrib();
+		}
 	
 	/* Render all locators: */
 	for(LocatorList::const_iterator lIt=locators.begin();lIt!=locators.end();++lIt)
@@ -1258,7 +1357,7 @@ void LidarViewer::extractPlaneCallback(Misc::CallbackData* cbData)
 		{
 		PlanePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new PlanePrimitive(octrees[0],extractorPipe);
+			primitive=new PlanePrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 		else
 			primitive=new PlanePrimitive(extractorPipe);
 		
@@ -1282,7 +1381,7 @@ void LidarViewer::extractBruntonCallback(Misc::CallbackData* cbData)
 		{
 		BruntonPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new BruntonPrimitive(octrees[0],extractorPipe);
+			primitive=new BruntonPrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 		else
 			primitive=new BruntonPrimitive(extractorPipe);
 		
@@ -1326,7 +1425,7 @@ void LidarViewer::extractSphereCallback(Misc::CallbackData* cbData)
 		{
 		SpherePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new SpherePrimitive(octrees[0],extractorPipe);
+			primitive=new SpherePrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 		else
 			primitive=new SpherePrimitive(extractorPipe);
 		
@@ -1346,7 +1445,7 @@ void LidarViewer::extractCylinderCallback(Misc::CallbackData* cbData)
 		{
 		CylinderPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new CylinderPrimitive(octrees[0],extractorPipe);
+			primitive=new CylinderPrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 		else
 			primitive=new CylinderPrimitive(extractorPipe);
 		
@@ -1385,7 +1484,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a line by intersecting two planes: */
 			if(Vrui::isMaster())
-				primitive=new LinePrimitive(planes[0],planes[1],extractorPipe);
+				primitive=new LinePrimitive(planes[0],planes[1],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 			else
 				primitive=new LinePrimitive(extractorPipe);
 			}
@@ -1393,7 +1492,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a point by intersecting three planes: */
 			if(Vrui::isMaster())
-				primitive=new PointPrimitive(planes[0],planes[1],planes[2],extractorPipe);
+				primitive=new PointPrimitive(planes[0],planes[1],planes[2],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 			else
 				primitive=new PointPrimitive(extractorPipe);
 			}
@@ -1401,7 +1500,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a point by intersecting a plane and a line: */
 			if(Vrui::isMaster())
-				primitive=new PointPrimitive(planes[0],lines[0],extractorPipe);
+				primitive=new PointPrimitive(planes[0],lines[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
 			else
 				primitive=new PointPrimitive(extractorPipe);
 			}
@@ -1425,7 +1524,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 void LidarViewer::loadPrimitivesCallback(Misc::CallbackData* cbData)
 	{
 	/* Create a file selection dialog to select a primitive file: */
-	GLMotif::FileSelectionDialog* loadPrimitivesDialog=new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",0,".dat",Vrui::openPipe());
+	GLMotif::FileSelectionDialog* loadPrimitivesDialog=new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",Vrui::openDirectory("."),".dat");
 	loadPrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::loadPrimitivesOKCallback);
 	loadPrimitivesDialog->getCancelCallbacks().add(loadPrimitivesDialog,&GLMotif::FileSelectionDialog::defaultCloseCallback);
 	
@@ -1438,8 +1537,8 @@ void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallb
 	try
 		{
 		/* Open the primitive file: */
-		IO::AutoFile primitiveFile(Vrui::openFile(cbData->selectedFileName.c_str()));
-		primitiveFile->setEndianness(IO::File::LittleEndian);
+		IO::FilePtr primitiveFile(cbData->selectedDirectory->openFile(cbData->selectedFileName));
+		primitiveFile->setEndianness(Misc::LittleEndian);
 		
 		/* Read the file header: */
 		char header[40];
@@ -1489,6 +1588,9 @@ void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallb
 		{
 		Vrui::showErrorMessage("Load Primitives",err.what());
 		}
+	
+	/* Close the file selection dialog: */
+	cbData->fileSelectionDialog->close();
 	}
 
 void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
@@ -1496,8 +1598,8 @@ void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
 	try
 		{
 		/* Open the primitive file: */
-		IO::AutoFile primitiveFile(Vrui::openFile(Misc::createNumberedFileName("SavedPrimitives.dat",4).c_str(),IO::File::WriteOnly));
-		primitiveFile->setEndianness(IO::File::LittleEndian);
+		IO::FilePtr primitiveFile(Vrui::openFile(Misc::createNumberedFileName("SavedPrimitives.dat",4).c_str(),IO::File::WriteOnly));
+		primitiveFile->setEndianness(Misc::LittleEndian);
 		
 		/* Write the file header: */
 		char header[40];

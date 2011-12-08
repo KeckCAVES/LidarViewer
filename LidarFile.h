@@ -23,12 +23,12 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #ifndef LIDARFILE_INCLUDED
 #define LIDARFILE_INCLUDED
 
-#include <Misc/LargeFile.h>
+#include <IO/StandardFile.h>
 
 #include "LidarTypes.h"
 #include "Cube.h"
 
-typedef Misc::LargeFile LidarFile; // Type for LiDAR octree and data files
+typedef IO::StandardFile LidarFile; // Type for LiDAR octree and data files
 
 struct LidarOctreeFileHeader // Header structure for LiDAR octree files
 	{

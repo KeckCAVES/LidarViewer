@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor classes to calculate a normal vector for each
 point in a LiDAR data set.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -39,28 +39,33 @@ namespace Misc {
 class File;
 }
 
-class NormalCalculator
+class NormalCalculator // Base class for functors calculating normal vectors based on point neighborhoods
 	{
 	/* Embedded classes: */
 	public:
 	typedef Geometry::Plane<double,3> Plane; // Type for planes
-	private:
+	protected:
 	typedef Geometry::ComponentArray<double,3> CA;
 	typedef Geometry::Matrix<double,3,3> Matrix;
 	
+	/* Protected methods: */
+	protected:
+	static Plane::Vector calcEigenvector(const Matrix& cov,double eigenvalue); // Returns the eigenvector of the given matrix for the given eigenvalue
+	static Plane::Vector calcNormal(const Matrix& cov); // Returns the normal vector of the plane defined by the given covariance matrix
+	};
+
+class RadiusNormalCalculator:public NormalCalculator // Class to calculate normal vectors by accumulating points from a neighborhood of fixed size
+	{
 	/* Elements: */
 	private:
-	Point queryPoint; // The query point for which to calculate a plane equation
 	Scalar radius2; // Squared search radius around query point
+	Point queryPoint; // The query point for which to calculate a plane equation
 	double pxpxs,pxpys,pxpzs,pypys,pypzs,pzpzs,pxs,pys,pzs; // Accumulated components of covariance matrix
 	size_t numPoints; // Number of accumulated points
 	
-	/* Private methods: */
-	Plane::Vector calcEigenvector(const Matrix& cov,double eigenvalue) const; // Returns the eigenvector of the given matrix for the given eigenvalue
-	
 	/* Constructors and destructors: */
 	public:
-	NormalCalculator(const Point& sQueryPoint,Scalar sRadius2); // Creates an empty normal calculator
+	RadiusNormalCalculator(Scalar sRadius); // Creates normal calculator for the given search radius
 	
 	/* Methods: */
 	void operator()(const LidarPoint& lp) // Process the given LiDAR point
@@ -90,6 +95,8 @@ class NormalCalculator
 		{
 		return radius2;
 		}
+	
+	void prepare(const Point& newQueryPoint); // Prepares the normal calculator for traversal around the given point
 	size_t getNumPoints(void) const // Returns the number of processed points
 		{
 		return numPoints;
@@ -97,12 +104,65 @@ class NormalCalculator
 	Plane calcPlane(void) const; // Returns the least-squares plane fitting the processed points
 	};
 
+class NumberRadiusNormalCalculator:public NormalCalculator // Class to calculate normal vectors by accumulating points from a neighborhood of maximum size and maximum number of neighbors
+	{
+	/* Embedded classes: */
+	private:
+	struct Neighbor // Structure to store a neighbor
+		{
+		/* Elements: */
+		public:
+		Point point; // Copy of neighbor's position
+		Scalar dist2; // Squared distance from query position to neighbor
+		};
+	
+	/* Elements: */
+	private:
+	unsigned int maxNumNeighbors; // Maximum number of neighbors
+	Scalar maxDist2; // Squared maximum distance to neighbors
+	Point queryPoint; // The query point position
+	Neighbor* neighbors; // Array of current neighbor candidates, organized as a heap
+	unsigned int currentNumNeighbors; // Current number of neighbor candidates
+	Scalar currentMaxDist2; // Current maximum distance to any neighbor candidate
+	
+	/* Constructors and destructors: */
+	public:
+	NumberRadiusNormalCalculator(unsigned int sMaxNumNeighbors); // Creates normal calculator for the given number of neighbors and unlimited neighborhood size
+	NumberRadiusNormalCalculator(unsigned int sMaxNumNeighbors,Scalar sMaxDist); // Creates normal calculator for the given number of neighbors and given neighborhood size
+	NumberRadiusNormalCalculator(const NumberRadiusNormalCalculator& source); // Copy constructor
+	NumberRadiusNormalCalculator& operator=(const NumberRadiusNormalCalculator& source); // Assignment operator
+	~NumberRadiusNormalCalculator(void);
+	
+	/* Methods: */
+	void operator()(const LidarPoint& point);
+	const Point& getQueryPoint(void) const
+		{
+		return queryPoint;
+		}
+	Scalar getQueryRadius2(void) const
+		{
+		return currentMaxDist2;
+		}
+	
+	void prepare(const Point& newQueryPoint); // Prepares the normal calculator for traversal around the given point
+	unsigned int getNumPoints(void) const // Returns the number of neighbors in the neighborhood
+		{
+		return currentNumNeighbors;
+		}
+	Plane calcPlane(void) const; // Returns the least-squares plane fitting the processed points
+	};
+
+template <class NormalCalculatorParam>
 class NodeNormalCalculator
 	{
+	/* Embedded classes: */
+	public:
+	typedef NormalCalculatorParam NormalCalculator; // Normal calculator class
+	
 	/* Elements: */
 	private:
 	LidarProcessOctree& lpo; // The processed LiDAR octree
-	Scalar radius2; // The squared search radius around each LiDAR point
+	const NormalCalculator& normalCalculator; // The "prototype" normal calculator
 	Vector* normalBuffer; // Array to hold normal vectors for a node during processing
 	Vector* childNormalBuffers[8]; // Array of normal arrays for a node's children during subsampling
 	LidarFile::Offset normalDataSize; // Size of each record in the normal file
@@ -128,12 +188,16 @@ class NodeNormalCalculator
 	
 	/* Constructors and destructors: */
 	public:
-	NodeNormalCalculator(LidarProcessOctree& sLpo,Scalar sRadius,const char* normalFileName,unsigned int sNumThreads =1); // Creates a normal calculator with the given parameters
+	NodeNormalCalculator(LidarProcessOctree& sLpo,const NormalCalculator& sNormalCalculator,const char* normalFileName,unsigned int sNumThreads =1); // Creates a node normal calculator with the given point normal calculator and parameters
 	~NodeNormalCalculator(void);
 	
 	/* Methods: */
 	void saveOutlierPoints(const char* outlierFileName); // Saves outlier points to the given file
 	void operator()(LidarProcessOctree::Node& node,unsigned int nodeLevel);
 	};
+
+#ifndef NORMALCALCULATOR_IMPLEMENTATION
+#include "NormalCalculator.icpp"
+#endif
 
 #endif

@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #define TEMPOCTREE_INCLUDED
 
 #include <vector>
-#include <Misc/LargeFile.h>
+#include <IO/StandardFile.h>
 
 #include "LidarTypes.h"
 #include "Cube.h"
@@ -36,7 +36,7 @@ class TempOctree
 	public:
 	typedef std::vector<LidarPoint> LidarPointList; // Type for lists of LiDAR points
 	private:
-	typedef Misc::LargeFile File; // Type representing temporary octree files
+	typedef IO::StandardFile File; // Type representing temporary octree files
 	typedef File::Offset Offset; // Type for offsets in temporary octree files
 	
 	struct Node // Node of the temporary octree

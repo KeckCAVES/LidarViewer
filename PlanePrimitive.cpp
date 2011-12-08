@@ -1,6 +1,6 @@
 /***********************************************************************
 PlanePrimitive - Class for planes extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,7 +24,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
 #include <IO/File.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Geometry/Vector.h>
 #include <GL/gl.h>
@@ -56,7 +56,7 @@ PlanePrimitive::DataItem::~DataItem(void)
 Methods of class PlanePrimitive:
 *******************************/
 
-PlanePrimitive::PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
+PlanePrimitive::PlanePrimitive(const LidarOctree* octree,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Create a LiDAR plane extractor: */
 	LidarPlaneExtractor lpe;
@@ -122,7 +122,9 @@ PlanePrimitive::PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pi
 		
 		/* Print the plane equation: */
 		std::cout<<"Plane fitting "<<numPoints<<" points"<<std::endl;
-		std::cout<<"Centroid: ("<<centroid[0]<<", "<<centroid[1]<<", "<<centroid[2]<<")"<<std::endl;
+		LidarPlaneExtractor::Point tCentroid=centroid;
+		tCentroid+=translation;
+		std::cout<<"Centroid: ("<<tCentroid[0]<<", "<<tCentroid[1]<<", "<<tCentroid[2]<<")"<<std::endl;
 		LidarPlaneExtractor::Vector normal=planeFrame[2];
 		normal.normalize();
 		std::cout<<"Normal vector: ("<<normal[0]<<", "<<normal[1]<<", "<<normal[2]<<")"<<std::endl;
@@ -140,7 +142,7 @@ PlanePrimitive::PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pi
 				pipe->write<Point::Scalar>(points[i].getComponents(),3);
 			pipe->write<int>(numX);
 			pipe->write<int>(numY);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -148,13 +150,13 @@ PlanePrimitive::PlanePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pi
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("PlanePrimitive::PlanePrimitive: Not enough selected points");
 		}
 	}
 
-PlanePrimitive::PlanePrimitive(Comm::MulticastPipe* pipe)
+PlanePrimitive::PlanePrimitive(Cluster::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())

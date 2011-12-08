@@ -1,7 +1,7 @@
 /***********************************************************************
 LinePrimitive - Class for lines extracted from point clouds by
 intersecting two plane primitives.
-Copyright (c) 2008-2010 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
 #include <IO/File.h>
-#include <Comm/MulticastPipe.h>
+#include <Cluster/MulticastPipe.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
 #include <Geometry/Box.h>
@@ -155,7 +155,7 @@ class LidarLineFitter
 Methods of class LinePrimitive:
 ******************************/
 
-LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,Comm::MulticastPipe* pipe)
+LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Get the two planes' plane equations: */
 	const PlanePrimitive* ps[2];
@@ -274,7 +274,9 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,C
 		
 		/* Print the line's equation: */
 		std::cout<<"Line intersecting two planes"<<std::endl;
-		std::cout<<"Center point: ("<<center[0]<<", "<<center[1]<<", "<<center[2]<<")"<<std::endl;
+		Point tCenter=center;
+		tCenter+=translation;
+		std::cout<<"Center point: ("<<tCenter[0]<<", "<<tCenter[1]<<", "<<tCenter[2]<<")"<<std::endl;
 		std::cout<<"Axis direction: ("<<axis[0]<<", "<<axis[1]<<", "<<axis[2]<<")"<<std::endl;
 		std::cout<<"Length: "<<length<<std::endl;
 		
@@ -287,7 +289,7 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,C
 			pipe->write<Scalar>(center.getComponents(),3);
 			pipe->write<Scalar>(axis.getComponents(),3);
 			pipe->write<Scalar>(length);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -295,13 +297,13 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,C
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("LinePrimitive::LinePrimitive: Given planes do not intersect");
 		}
 	}
 
-LinePrimitive::LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
+LinePrimitive::LinePrimitive(const LidarOctree* octree,Cluster::MulticastPipe* pipe)
 	{
 	/* Create a LiDAR line extractor: */
 	LidarLineExtractor lle;
@@ -351,7 +353,7 @@ LinePrimitive::LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe
 			pipe->write<Scalar>(center.getComponents(),3);
 			pipe->write<Scalar>(axis.getComponents(),3);
 			pipe->write<Scalar>(length);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		}
 	else
@@ -359,13 +361,13 @@ LinePrimitive::LinePrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe
 		if(pipe!=0)
 			{
 			pipe->write<int>(0);
-			pipe->finishMessage();
+			pipe->flush();
 			}
 		Misc::throwStdErr("LinePrimitive::LinePrimitive: Not enough selected points");
 		}
 	}
 
-LinePrimitive::LinePrimitive(Comm::MulticastPipe* pipe)
+LinePrimitive::LinePrimitive(Cluster::MulticastPipe* pipe)
 	{
 	/* Read the status flag from the pipe: */
 	if(!pipe->read<int>())

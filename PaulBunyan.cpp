@@ -1,8 +1,10 @@
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string>
 #include <iostream>
 #include <iomanip>
+#include <Misc/ThrowStdErr.h>
 #include <Threads/Thread.h>
 #include <Threads/Barrier.h>
 #include <Math/Math.h>
@@ -286,7 +288,7 @@ PaulBunyan::PaulBunyan(LidarProcessOctree& sLpo,const Axe& sAxe,const char* colo
 	:lpo(sLpo),axe(sAxe),
 	 colorBuffer(new Color[lpo.getMaxNumPointsPerNode()]),
 	 colorDataSize(sizeof(Color)),
-	 colorFile(colorFileName,"w+b",LidarFile::LittleEndian),
+	 colorFile(colorFileName,LidarFile::ReadWrite),
 	 pointFile(0),
 	 numThreads(sNumThreads),shutdownThreads(false),
 	 calcThreads(new Threads::Thread[numThreads]),calcBarrier(numThreads+1),
@@ -299,6 +301,7 @@ PaulBunyan::PaulBunyan(LidarProcessOctree& sLpo,const Axe& sAxe,const char* colo
 		childColorBuffers[i]=new Color[lpo.getMaxNumPointsPerNode()];
 	
 	/* Write the color file's header: */
+	colorFile.setEndianness(Misc::LittleEndian);
 	LidarDataFileHeader dfh((unsigned int)(colorDataSize));
 	dfh.write(colorFile);
 	
@@ -359,7 +362,7 @@ void PaulBunyan::operator()(LidarProcessOctree::Node& node,unsigned int nodeLeve
 				currentChildren[childIndex]=lpo.getChild(currentNode,childIndex);
 				if(currentChildren[childIndex]->getNumPoints()>0)
 					{
-					colorFile.seekSet(LidarDataFileHeader::getFileSize()+colorDataSize*currentChildren[childIndex]->getDataOffset());
+					colorFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+colorDataSize*currentChildren[childIndex]->getDataOffset());
 					colorFile.read(childColorBuffers[childIndex],currentChildren[childIndex]->getNumPoints());
 					}
 				}
@@ -373,7 +376,7 @@ void PaulBunyan::operator()(LidarProcessOctree::Node& node,unsigned int nodeLeve
 		}
 	
 	/* Write the node's colors to the color file: */
-	colorFile.seekSet(LidarDataFileHeader::getFileSize()+colorDataSize*currentNode->getDataOffset());
+	colorFile.setWritePosAbs(LidarDataFileHeader::getFileSize()+colorDataSize*currentNode->getDataOffset());
 	colorFile.write(colorBuffer,currentNode->getNumPoints());
 	
 	/* Update the progress counter: */

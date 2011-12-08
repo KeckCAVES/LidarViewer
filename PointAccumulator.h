@@ -1,7 +1,7 @@
 /***********************************************************************
 PointAccumulator - Helper class to read point clouds from multiple input
 files into a list of temporary out-of-core octree files.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,7 +26,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <string>
 #include <vector>
-#include <Geometry/OrthonormalTransformation.h>
+#include <Geometry/Point.h>
+#include <Geometry/Vector.h>
+#include <Geometry/Box.h>
 #include <Geometry/AffineTransformation.h>
 
 #include "LidarTypes.h"
@@ -38,8 +40,12 @@ class PointAccumulator
 	{
 	/* Embedded classes: */
 	public:
-	typedef Geometry::OrthonormalTransformation<double,3> ONTransform; // Type for rigid body transformations
+	typedef Geometry::Point<double,3> Point; // Type for double-valued points
+	typedef Geometry::Vector<double,3> Vector; // Type for double-valued vectors
+	typedef Geometry::Box<double,3> Box; // Type for double-valued axis-aligned boxes
 	typedef Geometry::AffineTransformation<double,3> ATransform; // Type for affine transformations
+	typedef Geometry::Point<float,3> Color; // Type for float-valued colors
+	typedef Geometry::Box<float,3> ColorBox; // Type for float-valued axis-aligned boxes
 	
 	/* Elements: */
 	private:
@@ -48,8 +54,13 @@ class PointAccumulator
 	unsigned int maxNumPointsPerNode; // Maximum number of points per node in the temporary octrees
 	std::string tempOctreeFileNameTemplate; // File name template for temporary octrees
 	std::vector<TempOctree*> tempOctrees; // List of temporary octrees holding out-of-memory point sets
+	bool havePointOffset; // Flag if there is a current point offset
+	Vector pointOffset; // Offset vector applied to incoming points before the (optional) transformation is applied
 	bool haveTransform; // Flag if there is a current point transformation
 	ATransform transform; // The current point transformation as an affine transformation
+	float colorMask[3]; // Color mask applied to incoming RGB color components
+	Box bounds; // Spatial extents of currently added point set
+	ColorBox colorBounds; // Color space extents of currently added point set
 	
 	/* Private methods: */
 	void savePoints(void); // Saves the current in-memory point set to a temporary octree file
@@ -70,8 +81,29 @@ class PointAccumulator
 		}
 	void setMemorySize(size_t memorySize,unsigned int newMaxNumPointsPerNode); // Limits the point accumulator to the given amount of memory in megabytes
 	void setTempOctreeFileNameTemplate(std::string newTempOctreeFileNameTemplate); // Sets the template for temporary octree file names
-	void setTransform(const ONTransform& newTransform); // Sets a new point transformation
-	void addPoint(const LidarPoint& lp) // Pushes a LiDAR point into the current point set
+	void setPointOffset(const Vector& newPointOffset); // Sets the point offset
+	void resetPointOffset(void); // Resets the point offset
+	const Vector& getPointOffset(void) const // Returns the current point offset
+		{
+		if(havePointOffset)
+			return pointOffset;
+		else
+			return Vector::zero;
+		}
+	template <class TransformationParam>
+	void setTransform(const TransformationParam& newTransform) // Sets a new point transformation
+		{
+		/* Remember that there is a transformation now: */
+		haveTransform=true;
+		
+		/* Convert the new transformation to an affine transformation: */
+		transform=newTransform;
+		}
+	void resetTransform(void); // Turns off point transformations
+	void setColorMask(const float newColorMask[3]); // Sets the current color mask
+	void resetExtents(void); // Resets the accumulated spatial and color space extents
+	void printExtents(void) const; // Prints the currently accumulated spatial and color space extents
+	void addPoint(const Point& p,const Color& c) // Pushes a double-valued colored point into the current point set
 		{
 		/* Check if the current in-memory point set is too big: */
 		if(points.size()==maxNumCacheablePoints)
@@ -81,13 +113,28 @@ class PointAccumulator
 			}
 		
 		/* Store the new point: */
+		Point pt=p;
+		if(havePointOffset)
+			pt+=pointOffset;
 		if(haveTransform)
+			pt=transform.transform(pt);
+		bounds.addPoint(pt);
+		LidarPoint lp;
+		lp=LidarPoint::Point(pt);
+		
+		/* Set the new point's color: */
+		for(int i=0;i<3;++i)
 			{
-			LidarPoint tlp=LidarPoint(transform.transform(ATransform::Point(lp)),lp.value);
-			points.push_back(tlp);
+			float col=c[i]*colorMask[i];
+			if(colorBounds.min[i]>col)
+				colorBounds.min[i]=col;
+			if(colorBounds.max[i]<col)
+				colorBounds.max[i]=col;
+			lp.value[i]=::Color::clampRound(col);
 			}
-		else
-			points.push_back(lp);
+		lp.value[3]=::Color::Scalar(255);
+		
+		points.push_back(lp);
 		}
 	void finishReading(void); // Finishes reading points from source files
 	std::vector<TempOctree*>& getTempOctrees(void) // Returns the list of temporary octrees

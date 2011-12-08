@@ -1,7 +1,7 @@
 /***********************************************************************
 ProfileExtractor - Algorithm to extract straight-line profiles from 2.5D
 LiDAR data.
-Copyright (c) 2010 Oliver Kreylos
+Copyright (c) 2010-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,11 +27,11 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "LidarTypes.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 class LidarOctree;
 
-void extractProfile(const LidarOctree* octree,const Point& p0,const Point& p1,double segmentLength,int oversampling,double filterWidth,int numLobes,Comm::MulticastPipe* pipe);
+void extractProfile(const LidarOctree* octree,const Point& p0,const Point& p1,double segmentLength,int oversampling,double filterWidth,int numLobes,Cluster::MulticastPipe* pipe);
 
 #endif

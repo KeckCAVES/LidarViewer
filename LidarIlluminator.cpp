@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarIlluminator - Post-processing filter to calculate normal vectors
 for each point in a LiDAR data set.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -33,6 +33,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 int main(int argc,char* argv[])
 	{
 	const char* fileName=0;
+	unsigned int maxNumNeighbors=0;
 	Scalar radius=Scalar(0);
 	int cacheSize=512;
 	const char* outlierFileName=0;
@@ -41,7 +42,12 @@ int main(int argc,char* argv[])
 		{
 		if(argv[i][0]=='-')
 			{
-			if(strcasecmp(argv[i]+1,"radius")==0)
+			if(strcasecmp(argv[i]+1,"neighbors")==0)
+				{
+				++i;
+				maxNumNeighbors=atoi(argv[i]);
+				}
+			else if(strcasecmp(argv[i]+1,"radius")==0)
 				{
 				++i;
 				radius=Scalar(atof(argv[i]));
@@ -74,20 +80,59 @@ int main(int argc,char* argv[])
 	/* Create a processing octree: */
 	LidarProcessOctree lpo(fileName,size_t(cacheSize)*size_t(1024*1024));
 	
-	/* Create a normal vector calculation functor: */
+	/* Create the output file name: */
 	std::string normalFileName=fileName;
 	normalFileName.push_back('/');
 	normalFileName.append("Normals");
-	NodeNormalCalculator nodeNormalCalculator(lpo,radius,normalFileName.c_str(),numThreads);
 	
-	/* Enable saving of outliers if requested: */
-	if(outlierFileName!=0)
-		nodeNormalCalculator.saveOutlierPoints(outlierFileName);
-	
-	/* Calculate normal vectors for all points in the octree: */
-	std::cout<<"Calculating normal vectors...   0%"<<std::flush;
-	lpo.processNodesPostfix(nodeNormalCalculator);
-	std::cout<<std::endl;
+	/* Check which version of the normal calculator to use: */
+	if(maxNumNeighbors>0)
+		{
+		/* Create a fixed-neighborhood normal vector calculation functor: */
+		if(radius>Scalar(0))
+			{
+			NumberRadiusNormalCalculator nc(maxNumNeighbors,radius);
+			NodeNormalCalculator<NumberRadiusNormalCalculator> nodeNormalCalculator(lpo,nc,normalFileName.c_str(),numThreads);
+			
+			/* Enable saving of outliers if requested: */
+			if(outlierFileName!=0)
+				nodeNormalCalculator.saveOutlierPoints(outlierFileName);
+			
+			/* Calculate normal vectors for all points in the octree: */
+			std::cout<<"Calculating normal vectors...   0%"<<std::flush;
+			lpo.processNodesPostfix(nodeNormalCalculator);
+			std::cout<<std::endl;
+			}
+		else
+			{
+			NumberRadiusNormalCalculator nc(maxNumNeighbors);
+			NodeNormalCalculator<NumberRadiusNormalCalculator> nodeNormalCalculator(lpo,nc,normalFileName.c_str(),numThreads);
+			
+			/* Enable saving of outliers if requested: */
+			if(outlierFileName!=0)
+				nodeNormalCalculator.saveOutlierPoints(outlierFileName);
+			
+			/* Calculate normal vectors for all points in the octree: */
+			std::cout<<"Calculating normal vectors...   0%"<<std::flush;
+			lpo.processNodesPostfix(nodeNormalCalculator);
+			std::cout<<std::endl;
+			}
+		}
+	else
+		{
+		/* Create a fixed-radius normal vector calculation functor: */
+		RadiusNormalCalculator nc(radius);
+		NodeNormalCalculator<RadiusNormalCalculator> nodeNormalCalculator(lpo,nc,normalFileName.c_str(),numThreads);
+		
+		/* Enable saving of outliers if requested: */
+		if(outlierFileName!=0)
+			nodeNormalCalculator.saveOutlierPoints(outlierFileName);
+		
+		/* Calculate normal vectors for all points in the octree: */
+		std::cout<<"Calculating normal vectors...   0%"<<std::flush;
+		lpo.processNodesPostfix(nodeNormalCalculator);
+		std::cout<<std::endl;
+		}
 	
 	return 0;
 	}

@@ -1,7 +1,7 @@
 /***********************************************************************
 PointSetSimilarity - Tool to calculate a similarity measure between two
 (relatively small) subsets of the same original point set.
-Copyright (c) 2009 Oliver Kreylos
+Copyright (c) 2009-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,7 +25,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdio.h>
 #include <vector>
 #include <iostream>
-#include <Misc/File.h>
+#include <IO/OpenFile.h>
+#include <IO/ValueSource.h>
 #include <Math/Math.h>
 #include <Geometry/ArrayKdTree.h>
 
@@ -71,18 +72,27 @@ typedef Geometry::ArrayKdTree<Point> PointTree;
 
 PointTree* loadPointSet(const char* pointFileName)
 	{
-	std::cout<<"Loading points from "<<pointFileName<<"..."<<std::flush;
 	std::vector<Point> points;
-	Misc::File pointFile(pointFileName,"rt");
-	while(!pointFile.eof())
+	{
+	std::cout<<"Loading points from "<<pointFileName<<"..."<<std::flush;
+	IO::ValueSource pointSource(IO::openFile(pointFileName));
+	pointSource.setWhitespace(',',true);
+	pointSource.setPunctuation('\n',true);
+	pointSource.skipWs();
+	while(!pointSource.eof())
 		{
-		char line[256];
-		pointFile.gets(line,sizeof(line));
-		float p[3];
-		if(sscanf(line,"%f %f %f",&p[0],&p[1],&p[2])==3)
-			points.push_back(Point(p));
+		/* Read the next point: */
+		Point p;
+		for(int i=0;i<3;++i)
+			p[i]=Scalar(pointSource.readNumber());
+		points.push_back(p);
+		
+		/* Skip the rest of the line: */
+		pointSource.skipLine();
+		pointSource.skipWs();
 		}
 	std::cout<<" done"<<std::endl;
+	}
 	
 	std::cout<<"Creating kd-tree of "<<points.size()<<" points..."<<std::flush;
 	PointTree* pointTree=new PointTree(points.size());

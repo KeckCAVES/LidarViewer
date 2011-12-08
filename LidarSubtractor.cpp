@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarSubtractor - Post-processing filter to subtract a (relatively
 small) point set from a LiDAR data set and create a new LiDAR data set.
-Copyright (c) 2009 Oliver Kreylos
+Copyright (c) 2009-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,7 +26,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <vector>
 #include <string>
 #include <iostream>
-#include <Misc/File.h>
+#include <IO/OpenFile.h>
+#include <IO/ValueSource.h>
 #include <Math/Math.h>
 #include <Geometry/ArrayKdTree.h>
 
@@ -103,7 +104,7 @@ class NodePointSubtractor
 				if(!mpf.isFound())
 					{
 					/* Point has no match in subtract set; add it to point accumulator: */
-					pa.addPoint(node[i]);
+					pa.addPoint(PointAccumulator::Point(node[i].getComponents()),PointAccumulator::Color(node[i].value.getRgba()));
 					}
 				}
 			}
@@ -195,18 +196,27 @@ int main(int argc,char* argv[])
 		}
 	
 	/* Load the subtraction point set into a kd-tree: */
-	std::cout<<"Loading subtraction points from "<<subtractFileName<<"..."<<std::flush;
 	std::vector<Point> subtractPoints;
-	Misc::File subtractFile(subtractFileName,"rt");
-	while(!subtractFile.eof())
+	{
+	std::cout<<"Loading subtraction points from "<<subtractFileName<<"..."<<std::flush;
+	IO::ValueSource subtractSource(IO::openFile(subtractFileName));
+	subtractSource.setWhitespace(',',true);
+	subtractSource.setPunctuation('\n',true);
+	subtractSource.skipWs();
+	while(!subtractSource.eof())
 		{
-		char line[256];
-		subtractFile.gets(line,sizeof(line));
-		float p[3];
-		if(sscanf(line,"%f %f %f",&p[0],&p[1],&p[2])==3)
-			subtractPoints.push_back(Point(p));
+		/* Read the next point: */
+		Point p;
+		for(int i=0;i<3;++i)
+			p[i]=Scalar(subtractSource.readNumber());
+		subtractPoints.push_back(p);
+		
+		/* Skip the rest of the line: */
+		subtractSource.skipLine();
+		subtractSource.skipWs();
 		}
 	std::cout<<" done"<<std::endl;
+	}
 	
 	std::cout<<"Creating kd-tree of "<<subtractPoints.size()<<" subtraction points..."<<std::flush;
 	Geometry::ArrayKdTree<Point>* subtractPointTree=new Geometry::ArrayKdTree<Point>(subtractPoints.size());

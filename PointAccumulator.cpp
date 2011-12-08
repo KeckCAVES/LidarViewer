@@ -1,7 +1,7 @@
 /***********************************************************************
 PointAccumulator - Helper class to read point clouds from multiple input
 files into a list of temporary out-of-core octree files.
-Copyright (c) 2005-2008 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -21,13 +21,15 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 02111-1307 USA
 ***********************************************************************/
 
+#include "PointAccumulator.h"
+
 #include <string.h>
 #include <utility>
 #include <iostream>
+#include <iomanip>
+#include <Math/Constants.h>
 
 #include "TempOctree.h"
-
-#include "PointAccumulator.h"
 
 /*********************************
 Methods of class PointAccumulator:
@@ -50,8 +52,13 @@ void PointAccumulator::savePoints(void)
 PointAccumulator::PointAccumulator(void)
 	:maxNumCacheablePoints(~0x0U),
 	 maxNumPointsPerNode(4096),
-	 tempOctreeFileNameTemplate("/tmp/LidarPreprocessorTempOctreeXXXXXX")
+	 tempOctreeFileNameTemplate("/tmp/LidarPreprocessorTempOctreeXXXXXX"),
+	 havePointOffset(false),pointOffset(Vector::zero),
+	 haveTransform(false),transform(ATransform::identity)
 	{
+	resetExtents();
+	for(int i=0;i<3;++i)
+		colorMask[i]=1.0f;
 	}
 
 PointAccumulator::~PointAccumulator(void)
@@ -83,16 +90,42 @@ void PointAccumulator::setTempOctreeFileNameTemplate(std::string newTempOctreeFi
 	tempOctreeFileNameTemplate=newTempOctreeFileNameTemplate;
 	}
 
-void PointAccumulator::setTransform(const PointAccumulator::ONTransform& newTransform)
+void PointAccumulator::setPointOffset(const PointAccumulator::Vector& newPointOffset)
 	{
-	if(newTransform.getTranslation()!=ONTransform::Vector::zero||newTransform.getRotation()!=ONTransform::Rotation::identity)
-		{
-		/* Convert the transformation to an affine transformation: */
-		transform=ATransform(newTransform);
-		haveTransform=true;
-		}
-	else
-		haveTransform=false;
+	havePointOffset=newPointOffset!=Vector::zero;
+	pointOffset=newPointOffset;
+	}
+
+void PointAccumulator::resetPointOffset(void)
+	{
+	havePointOffset=false;
+	}
+
+void PointAccumulator::resetTransform(void)
+	{
+	haveTransform=false;
+	}
+
+void PointAccumulator::setColorMask(const float newColorMask[3])
+	{
+	for(int i=0;i<3;++i)
+		colorMask[i]=newColorMask[i];
+	}
+
+void PointAccumulator::resetExtents(void)
+	{
+	bounds=Box::empty;
+	colorBounds=ColorBox::empty;
+	}
+
+void PointAccumulator::printExtents(void) const
+	{
+	std::cout.setf(std::ios::fixed);
+	int prec=std::cout.precision();
+	std::cout<<std::setprecision(6);
+	std::cout<<"Bounding box: ["<<bounds.min[0]<<", "<<bounds.max[0]<<"] x ["<<bounds.min[1]<<", "<<bounds.max[1]<<"] x ["<<bounds.min[2]<<", "<<bounds.max[2]<<"]"<<std::endl;
+	std::cout<<std::setprecision(prec);
+	std::cout<<"RGB range: ["<<colorBounds.min[0]<<", "<<colorBounds.max[0]<<"] x ["<<colorBounds.min[1]<<", "<<colorBounds.max[1]<<"] x ["<<colorBounds.min[2]<<", "<<colorBounds.max[2]<<"]"<<std::endl;
 	}
 
 void PointAccumulator::finishReading(void)

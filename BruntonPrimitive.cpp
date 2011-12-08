@@ -1,7 +1,7 @@
 /***********************************************************************
 BruntonPrimitive - Class for planes extracted from point clouds, with
 additional direct visualization of strike and dip angles.
-Copyright (c) 2009 Oliver Kreylos
+Copyright (c) 2009-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -230,8 +230,8 @@ void BruntonPrimitive::buildBrunton(void)
 	rootT->update();
 	}
 
-BruntonPrimitive::BruntonPrimitive(const LidarOctree* octree,Comm::MulticastPipe* pipe)
-	:PlanePrimitive(octree,pipe)
+BruntonPrimitive::BruntonPrimitive(const LidarOctree* octree,const Primitive::Vector& translation,Cluster::MulticastPipe* pipe)
+	:PlanePrimitive(octree,translation,pipe)
 	{
 	/* Print the strike and dip angles: */
 	Vector normal=getPlane().getNormal();
@@ -248,7 +248,7 @@ BruntonPrimitive::BruntonPrimitive(const LidarOctree* octree,Comm::MulticastPipe
 	buildBrunton();
 	}
 
-BruntonPrimitive::BruntonPrimitive(Comm::MulticastPipe* pipe)
+BruntonPrimitive::BruntonPrimitive(Cluster::MulticastPipe* pipe)
 	:PlanePrimitive(pipe)
 	{
 	buildBrunton();

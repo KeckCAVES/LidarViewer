@@ -26,6 +26,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 /* Forward declarations: */
 class PointAccumulator;
 
-void readPlyFile(PointAccumulator& pa,const char* fileName,const float colorMask[3]);
+void readPlyFile(PointAccumulator& pa,const char* fileName);
 
 #endif

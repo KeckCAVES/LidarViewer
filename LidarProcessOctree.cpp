@@ -24,7 +24,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/File.h>
+#include <IO/File.h>
+#include <IO/OpenFile.h>
 #include <Math/Math.h>
 
 #include "LidarProcessOctree.h"
@@ -175,7 +176,7 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 	Threads::Mutex::Lock fileLock(fileMutex);
 	#endif
 	Node* children=new Node[8];
-	indexFile.seekSet(node.childrenOffset);
+	indexFile.setReadPosAbs(node.childrenOffset);
 	for(int childIndex=0;childIndex<8;++childIndex)
 		{
 		Node& child=children[childIndex];
@@ -194,7 +195,7 @@ void LidarProcessOctree::subdivide(LidarProcessOctree::Node& node)
 			{
 			/* Load the child node's points: */
 			child.points=new LidarPoint[maxNumPointsPerNode]; // Always allocate maximum to prevent memory fragmentation
-			pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*child.dataOffset);
+			pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*child.dataOffset);
 			pointsFile.read(child.points,child.numPoints);
 			}
 		
@@ -277,12 +278,15 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 }
 
 LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSize)
-	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
-	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
+	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str()),
+	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str()),
 	 offset(OffsetVector::zero),
 	 numSubdivideCalls(0),numLoadedNodes(0),
 	 lruHead(0),lruTail(0)
 	{
+	indexFile.setEndianness(Misc::LittleEndian);
+	pointsFile.setEndianness(Misc::LittleEndian);
+	
 	/* Read the octree file header: */
 	LidarOctreeFileHeader ofh(indexFile);
 	
@@ -308,9 +312,7 @@ LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSi
 	root.detailSize=rootfn.detailSize;
 	
 	/* Get the total number of nodes by dividing the index file's size by the size of one octree node: */
-	indexFile.seekEnd(0);
-	LidarFile::Offset indexFileSize=indexFile.tell();
-	numNodes=size_t((indexFileSize-LidarOctreeFileHeader::getFileSize())/LidarFile::Offset(LidarOctreeFileNode::getFileSize()));
+	numNodes=size_t((indexFile.getSize()-LidarOctreeFileHeader::getFileSize())/LidarFile::Offset(LidarOctreeFileNode::getFileSize()));
 	
 	/* Read the point file's header: */
 	LidarDataFileHeader dfh(pointsFile);
@@ -320,7 +322,7 @@ LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSi
 		{
 		/* Load the root node's points: */
 		root.points=new LidarPoint[maxNumPointsPerNode]; // Always allocate maximum to prevent memory fragmentation
-		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*root.dataOffset);
+		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*root.dataOffset);
 		pointsFile.read(root.points,root.numPoints);
 		}
 	
@@ -329,15 +331,16 @@ LidarProcessOctree::LidarProcessOctree(const char* lidarFileName,size_t sCacheSi
 	/* Try loading an offset file: */
 	try
 		{
-		Misc::File offsetFile(getLidarPartFileName(lidarFileName,"Offset").c_str(),"rb",Misc::File::LittleEndian);
+		IO::FilePtr offsetFile(IO::openFile(getLidarPartFileName(lidarFileName,"Offset").c_str()));
+		offsetFile->setEndianness(Misc::LittleEndian);
 		
 		/* Read the original offset vector: */
-		offsetFile.read<OffsetVector::Scalar>(offset.getComponents(),3);
+		offsetFile->read<OffsetVector::Scalar>(offset.getComponents(),3);
 		
 		/* Invert the offset transformation: */
 		offset=-offset;
 		}
-	catch(Misc::File::OpenError err)
+	catch(IO::File::OpenError err)
 		{
 		/* Ignore the error */
 		}

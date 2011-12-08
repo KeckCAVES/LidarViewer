@@ -30,8 +30,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 size_t checkLasFileRange(const char* fileName,double bbox[6],float intensityRange[2],float rgbRange[3][2])
 	{
 	/* Open the LAS input file: */
-	IO::AutoSeekableFile file(IO::openSeekableFile(fileName));
-	file->setEndianness(IO::File::LittleEndian);
+	IO::SeekableFilePtr file(IO::openSeekableFile(fileName));
+	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the LAS file header: */
 	char signature[4];

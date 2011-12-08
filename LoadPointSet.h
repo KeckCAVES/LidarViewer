@@ -24,8 +24,10 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #ifndef LOADPOINTSET_INCLUDED
 #define LOADPOINTSET_INCLUDED
 
+#include <IO/File.h>
+
 #include "LidarTypes.h"
 
-void loadPointSet(const char* lidarFileName,unsigned int memCacheSize,const char* pointFileName,Scalar filterRadius,int numLobes,const Vector& pointOffset);
+void loadPointSet(const char* lidarFileName,unsigned int memCacheSize,IO::FilePtr pointFile,Scalar filterRadius,int numLobes,const Vector& pointOffset);
 
 #endif

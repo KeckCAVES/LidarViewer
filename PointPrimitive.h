@@ -2,7 +2,7 @@
 PointPrimitive - Class for points extracted from point clouds by
 intersecting three plane primitives or one line primitive and one plane
 primitive.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -30,7 +30,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "Primitive.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 class PlanePrimitive;
@@ -48,9 +48,9 @@ class PointPrimitive:public Primitive
 		{
 		};
 	public:
-	PointPrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const PlanePrimitive* p3,Comm::MulticastPipe* pipe); // Creates point primitive by intersecting the three given plane primitives; writes result to given pipe if !=0
-	PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,Comm::MulticastPipe* pipe); // Creates point primitive by intersecting the given plane and line primitives; writes result to given pipe if !=0
-	PointPrimitive(Comm::MulticastPipe* pipe); // Creates point primitive by reading point data from given pipe
+	PointPrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,const PlanePrimitive* p3,const Vector& translation,Cluster::MulticastPipe* pipe); // Creates point primitive by intersecting the three given plane primitives; writes result to given pipe if !=0
+	PointPrimitive(const PlanePrimitive* p,const LinePrimitive* l,const Vector& translation,Cluster::MulticastPipe* pipe); // Creates point primitive by intersecting the given plane and line primitives; writes result to given pipe if !=0
+	PointPrimitive(Cluster::MulticastPipe* pipe); // Creates point primitive by reading point data from given pipe
 	PointPrimitive(IO::File& file,const Vector& translation); // Reads a point primitive from a binary file
 	
 	/* Methods: */

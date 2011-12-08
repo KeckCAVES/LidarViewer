@@ -1,7 +1,7 @@
 /***********************************************************************
 PointBasedLightingShader - Class to maintain a GLSL point-based lighting
 shader that tracks the current OpenGL lighting state.
-Copyright (c) 2008 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,49 +27,28 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <string>
 #include <GL/gl.h>
 #include <GL/Extensions/GLARBShaderObjects.h>
+#include <GL/GLLightTracker.h>
 
 class PointBasedLightingShader
 	{
-	/* Embedded classes: */
-	private:
-	struct LightState // Structure tracking salient state of OpenGL light sources for just-in-time shader compilation
-		{
-		/* Elements: */
-		public:
-		bool enabled; // Flag whether the light source is enabled
-		bool attenuated; // Flag whether the light source uses non-constant attenuation
-		bool spotLight; // Flag whether the light source is a spot light
-		
-		/* Constructors and destructors: */
-		LightState(void)
-			:enabled(false),attenuated(false),spotLight(false)
-			{
-			}
-		};
-	
 	/* Elements: */
 	private:
-	static const char* applyLightTemplate;
-	static const char* applyAttenuatedLightTemplate;
-	static const char* applySpotLightTemplate;
-	static const char* applyAttenuatedSpotLightTemplate;
-	bool colorMaterial; // Flag whether material color tracking is enabled
-	int maxNumLights; // Maximum number of lights supported by local OpenGL
-	LightState* lightStates; // Array of tracking states for each OpenGL light source
+	const GLLightTracker& lightTracker; // Helper structure to track the lighting state of this shader's OpenGL context
+	unsigned int lightStateVersion; // Version of light tracker's state reflected in the current shader program
+	bool usePointColors; // Flag whether the point renderer uses point colors as ambient and diffuse color
 	GLhandleARB vertexShader,fragmentShader; // Handle for the vertex and fragment shaders
 	GLhandleARB programObject; // Handle for the linked program object
 	
 	/* Private methods: */
-	std::string createApplyLightFunction(const char* functionTemplate,int lightIndex) const;
+	void compileShader(void); // Recompiles the point-based lighting shader based on the current states of all OpenGL light sources
 	
 	/* Constructors and destructors: */
 	public:
-	PointBasedLightingShader(void);
+	PointBasedLightingShader(const GLLightTracker& sLightTracker);
 	~PointBasedLightingShader(void);
 	
 	/* Methods: */
-	bool updateLightingState(void); // Updates tracked lighting state; returns true if shader needs to be recompiled
-	void compileShader(void); // Recompiles the point-based lighting shader based on the current states of all OpenGL light sources
+	void setUsePointColors(bool newUsePointColors); // Sets the point coloring flag
 	void enable(void); // Enables point-based lighting in the current OpenGL context
 	void disable(void); // Disables point-based lighting in the current OpenGL context
 	};

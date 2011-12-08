@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2010 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,6 +26,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <string>
 #include <iostream>
 #include <iomanip>
+#include <Misc/ThrowStdErr.h>
 #include <Geometry/Ray.h>
 #include <Geometry/Box.h>
 #include <GL/gl.h>
@@ -809,17 +810,17 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 		
 		/* Load the node's points into a temporary point buffer: */
 		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
-		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
+		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
 		pointsFile.read(pointsBuffer,node->numPoints);
 		Vector* normalsBuffer=new Vector[maxNumPointsPerNode];
-		normalsFile->seekSet(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
+		normalsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
 		normalsFile->read(normalsBuffer,node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
 			Color* colorsBuffer=new Color[maxNumPointsPerNode];
-			colorsFile->seekSet(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
+			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
 			colorsFile->read(colorsBuffer,node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
@@ -861,14 +862,14 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 		
 		/* Load the node's points into a temporary point buffer: */
 		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
-		pointsFile.seekSet(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
+		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
 		pointsFile.read(pointsBuffer,node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
 			Color* colorsBuffer=new Color[maxNumPointsPerNode];
-			colorsFile->seekSet(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
+			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
 			colorsFile->read(colorsBuffer,node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
@@ -1007,7 +1008,7 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 		
 		/* Create the node's children: */
 		Node* children=new Node[8];
-		indexFile.seekSet(node->childrenOffset);
+		indexFile.setReadPosAbs(node->childrenOffset);
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			LidarOctreeFileNode ofn;
@@ -1073,8 +1074,8 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 }
 
 LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize)
-	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),"rb",LidarFile::LittleEndian),
-	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str(),"rb",LidarFile::LittleEndian),
+	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str()),
+	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str()),
 	 normalsFile(0),
 	 colorsFile(0),
 	 maxRenderLOD(Math::sqrt(Scalar(2))),
@@ -1088,7 +1089,7 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	/* Check if there is a normal vector file: */
 	try
 		{
-		normalsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Normals").c_str(),"rb",LidarFile::LittleEndian);
+		normalsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Normals").c_str());
 		}
 	catch(std::runtime_error err)
 		{
@@ -1097,13 +1098,14 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	/* Check if there is a color file: */
 	try
 		{
-		colorsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Colors").c_str(),"rb",LidarFile::LittleEndian);
+		colorsFile=new LidarFile(getLidarPartFileName(lidarFileName,"Colors").c_str());
 		}
 	catch(std::runtime_error err)
 		{
 		}
 	
 	/* Read the octree file header: */
+	indexFile.setEndianness(Misc::LittleEndian);
 	LidarOctreeFileHeader ofh(indexFile);
 	
 	/* Initialize the root node's domain: */
@@ -1145,12 +1147,14 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	root.subdivisionQueueIndex=subdivisionRequestQueueLength;
 	
 	/* Read the point file's header: */
+	pointsFile.setEndianness(Misc::LittleEndian);
 	LidarDataFileHeader dfh(pointsFile);
 	pointsRecordSize=LidarFile::Offset(dfh.recordSize);
 	
 	if(root.haveNormals)
 		{
 		/* Read the normal vector file's header: */
+		normalsFile->setEndianness(Misc::LittleEndian);
 		LidarDataFileHeader dfh(*normalsFile);
 		normalsRecordSize=LidarFile::Offset(dfh.recordSize);
 		}
@@ -1158,6 +1162,7 @@ LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsig
 	if(colorsFile!=0)
 		{
 		/* Read the color file's header: */
+		colorsFile->setEndianness(Misc::LittleEndian);
 		LidarDataFileHeader dfh(*colorsFile);
 		colorsRecordSize=LidarFile::Offset(dfh.recordSize);
 		}

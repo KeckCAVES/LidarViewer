@@ -1,7 +1,7 @@
 /***********************************************************************
 Primitive - Base class for primitives (planes, spheres, ...) that can be
 extracted from point clouds.
-Copyright (c) 2007-2008 Oliver Kreylos
+Copyright (c) 2007-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 

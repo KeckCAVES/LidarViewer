@@ -220,7 +220,7 @@ class BinaryPointSaver
 	{
 	/* Elements: */
 	private:
-	IO::SeekableFile* resultFile;
+	IO::SeekableFilePtr resultFile;
 	size_t numPoints;
 	
 	/* Constructors and destructors: */
@@ -230,7 +230,7 @@ class BinaryPointSaver
 		 numPoints(0)
 		{
 		/* Write the initial number of points: */
-		resultFile->setEndianness(IO::File::LittleEndian);
+		resultFile->setEndianness(Misc::LittleEndian);
 		resultFile->write<unsigned int>(0);
 		}
 	~BinaryPointSaver(void)
@@ -239,7 +239,6 @@ class BinaryPointSaver
 		resultFile->setWritePosAbs(0);
 		resultFile->write<unsigned int>(numPoints);
 		std::cout<<numPoints<<" points written to binary file"<<std::endl;
-		delete resultFile;
 		}
 	
 	/* Methods: */
@@ -254,6 +253,107 @@ class BinaryPointSaver
 		}
 	};
 
+class LasPointSaver
+	{
+	/* Elements: */
+	private:
+	IO::SeekableFilePtr lasFile;
+	double scale[3],offset[3];
+	double min[3],max[3];
+	size_t numPoints;
+	
+	/* Constructors and destructors: */
+	public:
+	LasPointSaver(const char* lasFileName,const double sScale[3],const double sOffset[3])
+		:lasFile(IO::openSeekableFile(lasFileName,IO::File::WriteOnly)),
+		 numPoints(0)
+		{
+		for(int i=0;i<3;++i)
+			{
+			scale[i]=sScale[i];
+			offset[i]=sOffset[i];
+			min[i]=Math::Constants<double>::max;
+			max[i]=Math::Constants<double>::min;
+			}
+		
+		/* Create the initial LAS file header: */
+		char signature[5]="LASF";
+		lasFile->write<char>(signature,4);
+		lasFile->write<unsigned short>(0);
+		lasFile->write<unsigned short>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned short>(0);
+		lasFile->write<unsigned short>(0);
+		char dummy[32]="";
+		lasFile->write<char>(dummy,8);
+		lasFile->write<unsigned char>(1);
+		lasFile->write<unsigned char>(2);
+		lasFile->write<char>(dummy,32);
+		lasFile->write<char>(dummy,32);
+		lasFile->write<unsigned short>(1);
+		lasFile->write<unsigned short>(2011);
+		lasFile->write<unsigned short>(227);
+		lasFile->write<unsigned int>(227);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned char>(0);
+		lasFile->write<unsigned short>(20);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<unsigned int>(0);
+		lasFile->write<double>(scale,3);
+		lasFile->write<double>(offset,3);
+		for(int i=0;i<3;++i)
+			{
+			lasFile->write<double>(max[i]);
+			lasFile->write<double>(min[i]);
+			}
+		}
+	~LasPointSaver(void)
+		{
+		/* Write the final LAS header: */
+		lasFile->setWritePosAbs(107);
+		lasFile->write<unsigned int>(numPoints);
+		lasFile->write<unsigned int>(numPoints);
+		lasFile->setWritePosAbs(179);
+		for(int i=0;i<3;++i)
+			{
+			lasFile->write<double>(max[i]);
+			lasFile->write<double>(min[i]);
+			}
+		}
+	
+	/* Methods: */
+	void operator()(const LidarPoint& point)
+		{
+		/* Quantize the point position: */
+		int p[3];
+		for(int i=0;i<3;++i)
+			p[i]=int(Math::floor((double(point[i])-offset[i])/scale[i]+0.5));
+		
+		/* Write the point record: */
+		lasFile->write<int>(p,3);
+		lasFile->write<unsigned short>(0);
+		lasFile->write<char>(0);
+		lasFile->write<char>(0);
+		lasFile->write<unsigned char>(0);
+		lasFile->write<unsigned char>(0);
+		lasFile->write<unsigned short>(0);
+		
+		/* Update LAS header: */
+		for(int i=0;i<3;++i)
+			{
+			if(min[i]>point[i])
+				min[i]=point[i];
+			if(max[i]<point[i])
+				max[i]=point[i];
+			}
+		++numPoints;
+		}
+	};
+
 int main(int argc,char* argv[])
 	{
 	LidarProcessOctree lpo(argv[1],512*1024*1024);
@@ -262,9 +362,14 @@ int main(int argc,char* argv[])
 	Misc::Timer t;
 	{
 	// BinaryPointSaver bps(argv[2]);
-	PointCounter pc;
-	lpo.processPoints(pc);
-	std::cout<<pc.getNumPoints()<<std::endl;
+	double scale[3]={0.001,0.001,0.001};
+	double offset[3];
+	for(int i=0;i<3;++i)
+		offset[i]=lpo.getDomain().getCenter(i);
+	LasPointSaver lps(argv[2],scale,offset);
+	// PointCounter pc;
+	lpo.processPoints(lps);
+	// std::cout<<lps.getNumPoints()<<std::endl;
 	}
 	t.elapse();
 	std::cout<<"Done in "<<t.getTime()*1000.0<<" ms"<<std::endl;

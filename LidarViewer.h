@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2010 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -33,6 +33,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/ToggleButton.h>
 #include <GLMotif/TextFieldSlider.h>
 #include <GLMotif/FileSelectionDialog.h>
+#include <SceneGraph/TransformNode.h>
 #include <Vrui/LocatorTool.h>
 #include <Vrui/LocatorToolAdapter.h>
 #include <Vrui/DraggingTool.h>
@@ -44,7 +45,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include "PointBasedLightingShader.h"
 
 /* Forward declarations: */
-namespace Comm {
+namespace Cluster {
 class MulticastPipe;
 }
 namespace GLMotif {
@@ -56,6 +57,7 @@ namespace Vrui {
 class InputDevice;
 class Lightsource;
 }
+
 class LidarOctree;
 class LidarTool;
 class ProfileTool;
@@ -64,7 +66,7 @@ class Primitive;
 class LidarViewer:public Vrui::Application,public GLObject
 	{
 	/* Embedded classes: */
-	private:
+	public:
 	typedef Geometry::Plane<double,3> GPlane;
 	
 	class Locator:public Vrui::LocatorToolAdapter // Base class for application locators
@@ -116,17 +118,22 @@ class LidarViewer:public Vrui::Application,public GLObject
 		
 		/* Constructors and destructors: */
 		public:
-		SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication);
+		SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,Misc::ConfigurationFileSection* cfg =0);
 		virtual ~SelectorLocator(void);
 		
-		/* Methods: */
+		/* Methods from Vrui::LocatorToolAdapter: */
+		virtual void storeState(Misc::ConfigurationFileSection& configFileSection) const;
+		virtual void getName(std::string& name) const;
 		virtual void motionCallback(Vrui::LocatorTool::MotionCallbackData* cbData);
 		virtual void buttonPressCallback(Vrui::LocatorTool::ButtonPressCallbackData* cbData);
 		virtual void buttonReleaseCallback(Vrui::LocatorTool::ButtonReleaseCallbackData* cbData);
+		
+		/* New methods: */
 		virtual void updateSettings();
 		virtual void glRenderAction(GLContextData& contextData) const;
 		};
 	
+	private:
 	typedef std::vector<Locator*> LocatorList;
 	typedef std::vector<Primitive*> PrimitiveList;
 	
@@ -139,7 +146,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 		PointBasedLightingShader pbls; // Shader for point-based lighting
 		
 		/* Constructors and destructors: */
-		DataItem(void);
+		DataItem(GLContextData& contextData);
 		virtual ~DataItem(void);
 		};
 	
@@ -174,7 +181,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	SelectorLocator::SelectorMode defaultSelectorMode; // Selection mode for new selector locators
 	Scalar neighborhoodSize; // Size of neighborhood for point classification
 	LocatorList locators; // List of currently existing locators
-	Comm::MulticastPipe* extractorPipe; // Pipe to synchronize feature extraction on a distributed rendering cluster
+	Cluster::MulticastPipe* extractorPipe; // Pipe to synchronize feature extraction on a distributed rendering cluster
 	GLColor<GLfloat,4> primitiveColor; // Color to render primitives, with transparency
 	GLColor<GLfloat,4> selectedPrimitiveColor; // Color to render selected primitives, with transparency
 	PrimitiveList primitives; // List of extracted primitives
@@ -189,6 +196,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::PopupWindow* renderDialog; // The rendering settings dialog
 	GLMotif::PopupWindow* interactionDialog; // The interaction settings dialog
 	GLMotif::RadioBox* interactionDialogSelectorModes;
+	SceneGraph::TransformNodePointer sceneGraphRoot; // Common root node for additional scene graphs
 	
 	/* Private methods: */
 	GLMotif::Popup* createSelectorModesMenu(void);
