@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2013 Oliver Kreylos
+Copyright (c) 2007-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,7 +27,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
-#include <string>
 #include <iostream>
 #include <Misc/Utility.h>
 #include <Misc/ThrowStdErr.h>
@@ -101,37 +100,6 @@ size_t TempOctree::Node::boundNumPointsInCube(const Cube& cube) const
 /***************************
 Methods of class TempOctree:
 ***************************/
-
-void TempOctree::readLidarSubtree(TempOctree::Node& node,LidarFile::Offset childrenOffset,LidarFile& indexFile)
-	{
-	/* Check if the node is an interior node: */
-	if(childrenOffset!=0)
-		{
-		/* Load the node's children: */
-		LidarOctreeFileNode childNodes[8];
-		indexFile.setReadPosAbs(childrenOffset);
-		for(int childIndex=0;childIndex<8;++childIndex)
-			childNodes[childIndex].read(indexFile);
-		
-		/* Recursively process the node's children: */
-		node.children=new Node[8];
-		node.numPoints=0;
-		for(int childIndex=0;childIndex<8;++childIndex)
-			{
-			/* Initialize the child node: */
-			node.children[childIndex].domain=Cube(node.domain,childIndex);
-			node.children[childIndex].numPoints=childNodes[childIndex].numPoints;
-			node.children[childIndex].pointsOffset=sizeof(LidarDataFileHeader)+childNodes[childIndex].dataOffset*sizeof(LidarPoint);
-			node.children[childIndex].children=0;
-			
-			/* Process the child node's subtree: */
-			readLidarSubtree(node.children[childIndex],childNodes[childIndex].childrenOffset,indexFile);
-			
-			/* Accumulate the child's number of points: */
-			node.numPoints+=node.children[childIndex].numPoints;
-			}
-		}
-	}
 
 void* TempOctree::writerThreadMethod(void)
 	{
@@ -274,9 +242,6 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 	/* Save the temporary file name: */
 	strcpy(tempFileName,fileNameTemplate);
 	
-	/* Immediately unlink the temporary file; it will stay alive until the file handle is closed: */
-	unlink(tempFileName);
-	
 	/* Calculate the point set's bounding box: */
 	for(unsigned int i=0;i<numPoints;++i)
 		pointBbox.addPoint(points[i]);
@@ -315,57 +280,12 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 	file.flush();
 	}
 
-namespace {
-
-/***********************************************************
-Helper functions to load LiDAR files given a base file name:
-***********************************************************/
-
-std::string getLidarPartFileName(const char* lidarFileName,const char* partFileName)
-	{
-	std::string result=lidarFileName;
-	result.push_back('/');
-	result.append(partFileName);
-	return result;
-	}
-
-}
-
-TempOctree::TempOctree(const char* lidarFileName)
-	:tempFileName(0),
-	 file(getLidarPartFileName(lidarFileName,"Points").c_str(),IO::File::ReadOnly)
-	{
-	file.setEndianness(Misc::LittleEndian);
-	
-	/* Open the LiDAR file's index file: */
-	LidarFile indexFile(getLidarPartFileName(lidarFileName,"Index").c_str(),IO::File::ReadOnly);
-	indexFile.setEndianness(Misc::LittleEndian);
-	
-	/* Read the octree file header: */
-	LidarOctreeFileHeader ofh(indexFile);
-	
-	/* Initialize the tree structure: */
-	maxNumPointsPerNode=ofh.maxNumPointsPerNode;
-	pointBbox=Box(ofh.domain.getMin(),ofh.domain.getMax());
-	
-	/* Read the root node's structure: */
-	LidarOctreeFileNode rootfn;
-	rootfn.read(indexFile);
-	root.domain=ofh.domain;
-	root.numPoints=rootfn.numPoints;
-	root.pointsOffset=sizeof(LidarDataFileHeader)+rootfn.dataOffset*sizeof(LidarPoint);
-	root.children=0;
-	
-	/* Read the entire octree structure: */
-	readLidarSubtree(root,rootfn.childrenOffset,indexFile);
-	}
-
 TempOctree::~TempOctree(void)
 	{
 	if(tempFileName!=0)
 		{
 		/* Delete the temporary octree file: */
-		// unlink(tempFileName);
+		unlink(tempFileName);
 		delete[] tempFileName;
 		}
 	}

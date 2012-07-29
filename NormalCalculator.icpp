@@ -363,7 +363,6 @@ NodeNormalCalculator<NormalCalculatorParam>::operator()(
 	else
 		{
 		/* Get pointers to the node's children and load their normal vector arrays: */
-		normalFile.flush();
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			currentChildren[childIndex]=lpo.getChild(currentNode,childIndex);
