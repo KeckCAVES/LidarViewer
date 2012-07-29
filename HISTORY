@@ -14,9 +14,9 @@ LiDAR Viewer 1.2:
   file, in human-readable format.
 - Fixed long-standing bug of "disappearing nodes," was due to not
   properly invalidating cached nodes under full cache conditions.
-- Added workaround in sphere / cylinder extraction routine to
-  accommodate the broken g++ version 4.0.1 Apple insists on shipping
-  with Xcode on Mac OS X 10.5.
+- Added workaround in sphere / cylinder extraction routine to accomodate
+  the broken g++ version 4.0.1 Apple insists on shipping with Xcode on
+  Mac OS X 10.5.
 
 LiDAR Viewer 1.3:
 - Added coordinate transformation to undo data offset; measurement tools
@@ -140,25 +140,3 @@ LiDAR Viewer 2.9:
   bounding boxes; will only read headers and not entire files.
 - Added file selection dialogs for "Save Selection..." and "Save
   Primitives..." menu entries.
-
-LiDAR Viewer 2.10:
-- Adapted to and bumped Vrui version requirement to 2.5-001.
-
-LiDAR Viewer 2.11:
-- Bumped Vrui version requirement to 2.7-001.
-- Added material properties editor to render dialog.
-- Reorganized render dialog with multi-page widget.
-- Fixed LidarColorMapper utility, and added reprojection between
-  different geographical coordinate systems.
-- Added "-showCoverage <wrl file name>" option to CalcLasRange to create
-  a scene graph showing the names and bounding boxes of all LAS files
-  given on the command line.
-- Added LidarSpotRemover utility.
-
-LiDAR Viewer 2.12:
-- Bumped Vrui version requirement to 3.0-001.
-
-LiDAR Viewer 2.13:
-- Added "Environment" tab to render dialog to control background color
-  and draw distance dynamically.
-- Bumped Vrui requirement to 4.2-006 and fixed some incompatibilities.

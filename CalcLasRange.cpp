@@ -1,7 +1,7 @@
 /***********************************************************************
 CalcLasRange - Utility program to calculate the spatial extent and range
 of point return intensities or colors stored in a set of .LAS files.
-Copyright (c) 2006-2013 Oliver Kreylos
+Copyright (c) 2006-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -23,8 +23,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <string.h>
 #include <iostream>
-#include <fstream>
-#include <IO/File.h>
+#include <IO/SeekableFile.h>
+#include <IO/ReadAheadFilter.h>
 #include <Comm/OpenFile.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
@@ -32,8 +32,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 size_t checkLasFileRange(const char* fileName,double bbox[6],bool getColorRange,float intensityRange[2],float rgbRange[3][2])
 	{
 	/* Open the LAS input file: */
-	IO::FilePtr file(Comm::openFile(fileName));
-	file->resizeReadBuffer(1048576);
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
 	/* Process the LAS file header: */
@@ -156,7 +155,6 @@ size_t checkLasFileRange(const char* fileName,double bbox[6],bool getColorRange,
 		{
 		std::cout<<" terminated after "<<pointIndex<<" point records due to exception "<<err.what()<<std::endl;
 		}
-	
 	return pointIndex;
 	}
 
@@ -178,158 +176,23 @@ int main(int argc,char* argv[])
 		rgbRange[i][1]=Math::Constants<float>::min;
 		}
 	
-	/* Parse the command line: */
+	int i=1;
+	int numFiles=argc-1;
 	bool getColorRange=true;
-	const char* sceneGraphName=0;
-	int argi;
-	for(argi=1;argi<argc&&argv[argi][0]=='-';++argi)
+	if(strcasecmp(argv[i],"-boxOnly")==0)
 		{
-		if(strcasecmp(argv[argi]+1,"boxOnly")==0)
-			{
-			/* Don't read all points and calculate intensity and color ranges: */
-			getColorRange=false;
-			}
-		else if(strcasecmp(argv[argi]+1,"showCoverage")==0)
-			{
-			/* Create a scene graph file showing the extents and names of all LAS files: */
-			++argi;
-			sceneGraphName=argv[argi];
-			}
-		}
-	
-	std::ofstream sceneGraph;
-	if(sceneGraphName!=0)
-		{
-		/* Create a scene graph file: */
-		sceneGraph.open(sceneGraphName);
-		sceneGraph<<"#VRML V2.0 utf8"<<std::endl;
-		sceneGraph.precision(12);
+		/* Don't read all points and calculate intensity and color ranges: */
+		getColorRange=false;
+		++i;
+		--numFiles;
 		}
 	
 	/* Process all LAS files from the command line: */
-	int firstLasFile=argi;
-	int numLasFiles=argc-firstLasFile;
 	size_t totalNumPoints=0;
-	for(;argi<argc;++argi)
+	for(;i<argc;++i)
 		{
-		std::cout<<"Checking file "<<argi+1-firstLasFile<<" of "<<numLasFiles<<":"<<argv[argi]<<"..."<<std::flush;
-		if(sceneGraphName!=0)
-			{
-			/* Create a new bounding box for this LAS file: */
-			double fileBbox[6];
-			for(int i=0;i<3;++i)
-				{
-				fileBbox[i]=Math::Constants<double>::max;
-				fileBbox[3+i]=Math::Constants<double>::min;
-				}
-			
-			/* Get the LAS file's extents: */
-			totalNumPoints+=checkLasFileRange(argv[argi],fileBbox,getColorRange,intensityRange,rgbRange);
-			
-			/* Create a scene graph node for this LAS file: */
-			sceneGraph<<"\n\
-				Shape\n\
-					{\n";
-			
-			if(argi==firstLasFile)
-				{
-				sceneGraph<<"\
-					appearance DEF Red Appearance\n\
-						{\n\
-						material Material\n\
-							{\n\
-							diffuseColor 0.0 0.0 0.0\n\
-							specularColor 0.0 0.0 0.0\n\
-							emissiveColor 1.0 0.0 0.0\n\
-							}\n\
-						}\n";
-				}
-			else
-				{
-				sceneGraph<<"\
-					appearance USE Red\n";
-				}
-			
-			sceneGraph<<"\
-					geometry IndexedLineSet\n\
-						{\n\
-						coord Coordinate\n\
-							{\n\
-							point\n\
-								[\n";
-			
-			for(int i=0;i<8;++i)
-				sceneGraph<<"\t\t\t\t\t\t\t\t"<<fileBbox[(i&0x1)?3:0]<<' '<<fileBbox[(i&0x2)?4:1]<<' '<<fileBbox[(i&0x4)?5:2]<<std::endl;
-			sceneGraph<<"\
-								]\n\
-							}\n\
-						coordIndex\n\
-							[\n\
-							0,1,3,2,0,4,5,7,6,4,-1\n\
-							1,5,-1\n\
-							3,7,-1\n\
-							2,6,-1\n\
-							]\n\
-						lineWidth 3.0\n\
-						}\n\
-					}\n";
-			
-			sceneGraph<<"\n\
-				Transform\n\
-					{\n";
-			sceneGraph<<"\t\t\t\t\ttranslation "<<Math::mid(fileBbox[0],fileBbox[3])<<" "<<Math::mid(fileBbox[1],fileBbox[4])<<" "<<fileBbox[5]<<std::endl;
-			sceneGraph<<"\
-					children\n\
-						[\n\
-						Shape\n\
-							{\n\
-							appearance USE Red\n\
-							geometry Text\n\
-								{\n";
-			
-			/* Show the LAS file's base name: */
-			const char* basePtr=argv[argi];
-			for(const char* fnPtr=argv[argi];*fnPtr!='\0';++fnPtr)
-				if(*fnPtr=='/')
-					basePtr=fnPtr+1;
-			sceneGraph<<"\t\t\t\t\t\t\t\tstring \""<<basePtr<<"\""<<std::endl;
-			
-			if(argi==firstLasFile)
-				{
-				sceneGraph<<"\
-								fontStyle DEF Sans FontStyle\n\
-									{\n\
-									family \"SANS\"\n\
-									style \"PLAIN\"\n\
-									size 75.0\n\
-									justify [\"MIDDLE\" \"MIDDLE\"]\n\
-									}\n";
-				}
-			else
-				{
-				sceneGraph<<"\
-								fontStyle USE Sans\n";
-				}
-			
-			sceneGraph<<"\t\t\t\t\t\t\t\tmaxExtent "<<(fileBbox[3]-fileBbox[0])*0.9<<std::endl;
-			
-			sceneGraph<<"\
-								}\n\
-							}\n\
-						]\n\
-					}\n";
-			
-			/* Merge the LAS file's bounding box with the overall box: */
-			for(int i=0;i<3;++i)
-				{
-				if(bbox[i]>fileBbox[i])
-					bbox[i]=fileBbox[i];
-				if(bbox[3+i]<fileBbox[3+i])
-					bbox[3+i]=fileBbox[3+i];
-				}
-			}
-		else
-			totalNumPoints+=checkLasFileRange(argv[argi],bbox,getColorRange,intensityRange,rgbRange);
+		std::cout<<"Checking file "<<i<<" of "<<numFiles<<":"<<argv[i]<<"..."<<std::flush;
+		totalNumPoints+=checkLasFileRange(argv[i],bbox,getColorRange,intensityRange,rgbRange);
 		}
 	std::cout<<"Total number of points: "<<totalNumPoints<<std::endl;
 	std::cout<<"Overall point bounding box: ["<<bbox[0]<<", "<<bbox[3]<<"] x ["<<bbox[1]<<", "<<bbox[4]<<"] x ["<<bbox[2]<<", "<<bbox[5]<<"]"<<std::endl;
@@ -337,12 +200,6 @@ int main(int argc,char* argv[])
 		{
 		std::cout<<"Overall intensity range: ["<<intensityRange[0]<<", "<<intensityRange[1]<<"]"<<std::endl;
 		std::cout<<"Overall RGB range: ["<<rgbRange[0][0]<<", "<<rgbRange[0][1]<<"], ["<<rgbRange[1][0]<<", "<<rgbRange[1][1]<<"], ["<<rgbRange[2][0]<<", "<<rgbRange[2][1]<<"]"<<std::endl;
-		}
-	
-	if(sceneGraphName!=0)
-		{
-		/* Close the scene graph file: */
-		sceneGraph.close();
 		}
 	
 	std::cout<<"Recommended offset vector for LiDAR pre-processor: -lasOffset";

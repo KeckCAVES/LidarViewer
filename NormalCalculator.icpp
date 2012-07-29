@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor classes to calculate a normal vector for each
 point in a LiDAR data set.
-Copyright (c) 2008-2014 Oliver Kreylos
+Copyright (c) 2008-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -109,14 +109,10 @@ class NormalAverager // Class to average normal vectors of collapsed points duri
 			const Vector& nearNormal=normalBase[&lp-pointBase];
 			
 			/* Accumulate the result normal: */
-			Scalar nearNormalLen=Geometry::mag(nearNormal);
-			if(nearNormalLen>Scalar(0))
-				{
-				if(nearNormal*pointNormal>=Scalar(0))
-					normal+=nearNormal/nearNormalLen;
-				else
-					normal-=nearNormal/nearNormalLen;
-				}
+			if(nearNormal*pointNormal>=Scalar(0))
+				normal+=nearNormal;
+			else
+				normal-=nearNormal;
 			}
 		}
 	const Point& getQueryPoint(void) const
@@ -173,9 +169,6 @@ NodeNormalCalculator<NormalCalculatorParam>::calcThreadMethod(
 				{
 				/* Get the fitted plane's normal vector: */
 				normalBuffer[i]=nc.calcPlane().getNormal();
-				
-				/* Scale the normal vector by distance to the closest non-identical neighbor: */
-				normalBuffer[i]*=nc.getClosestDist();
 				}
 			else
 				{
@@ -255,7 +248,8 @@ NodeNormalCalculator<NormalCalculatorParam>::subsampleThreadMethod(
 			
 			/* Store the averaged normal vector: */
 			normalBuffer[i]=normalAverager.getNormal();
-			normalBuffer[i]*=(Geometry::mag(pointNormal)-pointChild->getDetailSize()+currentNode->getDetailSize())/Geometry::mag(normalBuffer[i]);
+			if(normalBuffer[i]!=Vector::zero)
+				normalBuffer[i].normalize();
 			}
 		
 		/* Synchronize on the subsampling barrier to signal job completion: */
@@ -369,7 +363,6 @@ NodeNormalCalculator<NormalCalculatorParam>::operator()(
 	else
 		{
 		/* Get pointers to the node's children and load their normal vector arrays: */
-		normalFile.flush();
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			currentChildren[childIndex]=lpo.getChild(currentNode,childIndex);

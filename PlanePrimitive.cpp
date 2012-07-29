@@ -72,12 +72,9 @@ PlanePrimitive::PlanePrimitive(const LidarOctree* octree,const Primitive::Vector
 		double lengths[3];
 		lpe.calcPlane(centroid,planeFrame,lengths);
 		
-		/* Ensure that (planeFrame, planeNormal) is a right-handed system, and that planeNormal points "up:" */
-		if(planeFrame[2][2]<0.0)
+		/* Ensure that (planeFrame, planeNormal) is a right-handed system: */
+		if(Geometry::cross(planeFrame[0],planeFrame[1])*planeFrame[2]<Scalar(0))
 			planeFrame[2]=-planeFrame[2];
-		
-		if(Geometry::cross(planeFrame[1],planeFrame[2])*planeFrame[0]<0.0)
-			planeFrame[0]=-planeFrame[0];
 		plane=Plane(planeFrame[2],centroid);
 		
 		/* Calculate the bounding box of the selected points in plane coordinates: */

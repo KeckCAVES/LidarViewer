@@ -122,7 +122,7 @@ const Vrui::ToolFactory* LidarTool::getFactory(void) const
 void LidarTool::frame(void)
 	{
 	/* Calculate ray equation in navigation coordinates: */
-	LidarOctree::Ray deviceRay=sourceDevice->getRay();
+	LidarOctree::Ray deviceRay(sourceDevice->getPosition(),sourceDevice->getRayDirection());
 	LidarOctree::Ray modelRay=deviceRay;
 	modelRay.transform(Vrui::getInverseNavigationTransformation());
 	
@@ -156,20 +156,20 @@ void LidarTool::frame(void)
 		Vrui::getMainPipe()->read<Scalar>(rayParameter);
 		}
 	
-	transformedDevice->setDeviceRay(sourceDevice->getDeviceRayDirection(),sourceDevice->getDeviceRayStart());
 	if(rayParameter>=Scalar(0))
 		{
 		/* Set the device position to the intersection point: */
-		Vrui::TrackerState ts(Vrui::getNavigationTransformation().transform(modelRay(rayParameter))-Vrui::Point::origin,sourceDevice->getOrientation());
+		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(Vrui::getNavigationTransformation().transform(modelRay(rayParameter)));
 		transformedDevice->setTransformation(ts);
 		}
 	else
 		{
 		/* Move the device in the plane it currently inhabits: */
 		rayParameter=(deviceRay.getDirection()*Vector(transformedDevice->getPosition()-sourceDevice->getPosition()))/Geometry::sqr(deviceRay.getDirection());
-		Vrui::TrackerState ts(deviceRay(rayParameter)-Point::origin,sourceDevice->getOrientation());
+		Vrui::TrackerState ts=Vrui::TrackerState::translateFromOriginTo(deviceRay(rayParameter));
 		transformedDevice->setTransformation(ts);
 		}
+	transformedDevice->setDeviceRayDirection(deviceRay.getDirection());
 	}
 
 void LidarTool::display(GLContextData& contextData) const

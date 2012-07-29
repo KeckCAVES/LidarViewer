@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2017 Oliver Kreylos
+# Copyright (c) 2004-2012 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -25,15 +25,13 @@
 # matches the default Vrui installation; if Vrui's installation
 # directory was changed during Vrui's installation, the directory below
 # must be adapted.
-VRUI_MAKEDIR := /usr/local/share/Vrui-4.2/make
-ifdef DEBUG
-  VRUI_MAKEDIR = $(VRUI_MAKEDIR)/debug
-endif
+VRUI_MAKEDIR := $(HOME)/Vrui-2.4/share/make
 
-# Base installation directory for LiDAR Viewer. If this is set to the
-# default of $(PWD), LiDAR Viewer does not have to be installed to be
-# run. Created executables and resources will be installed in the bin
-# and share directories under the given base directory, respectively.
+# Base installation directory for the example programs. If this is set
+# to the default of $(PWD), the example programs do not have to be
+# installed to be run. Created executables and resources will be
+# installed in the bin and share directories under the given base
+# directory, respectively.
 # Important note: Do not use ~ as an abbreviation for the user's home
 # directory here; use $(HOME) instead.
 INSTALLDIR := $(shell pwd)
@@ -46,7 +44,7 @@ INSTALLDIR := $(shell pwd)
 # subsequent release versions of LiDAR Viewer from clobbering each
 # other. The value should be identical to the major.minor version
 # number found in VERSION in the root package directory.
-VERSION = 2.13
+VERSION = 2.9
 
 # Set up resource directories: */
 CONFIGDIR = etc/LidarViewer-$(VERSION)
@@ -75,10 +73,8 @@ PACKAGES = MYGEOMETRY MYMATH MYIO MYTHREADS MYMISC
 
 ALL = $(EXEDIR)/CalcLasRange \
       $(EXEDIR)/LidarPreprocessor \
-      $(EXEDIR)/LidarSpotRemover \
       $(EXEDIR)/LidarSubtractor \
       $(EXEDIR)/LidarIlluminator \
-      $(EXEDIR)/LidarColorMapper \
       $(EXEDIR)/PaulBunyan \
       $(EXEDIR)/LidarExporter \
       $(EXEDIR)/LidarGridder \
@@ -127,18 +123,11 @@ $(EXEDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarPreprocessor
 LidarPreprocessor: $(EXEDIR)/LidarPreprocessor
 
-LIDARSPOTREMOVER_SOURCES = LidarProcessOctree.cpp \
-                           LidarSpotRemover.cpp
-$(EXEDIR)/LidarSpotRemover: $(LIDARSPOTREMOVER_SOURCES:%.cpp=$(OBJDIR)/%.o)
-.PHONY: LidarSpotRemover
-LidarSpotRemover: $(EXEDIR)/LidarSpotRemover
-
 LIDARSUBTRACTOR_SOURCES = LidarProcessOctree.cpp \
                           SplitPoints.cpp \
                           TempOctree.cpp \
                           LidarOctreeCreator.cpp \
                           PointAccumulator.cpp \
-                          SubtractorHelper.cpp \
                           LidarSubtractor.cpp
 
 $(OBJDIR)/LidarSubtractor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
@@ -154,14 +143,6 @@ LIDARILLUMINATOR_SOURCES = LidarProcessOctree.cpp \
 $(EXEDIR)/LidarIlluminator: $(LIDARILLUMINATOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarIlluminator
 LidarIlluminator: $(EXEDIR)/LidarIlluminator
-
-LIDARCOLORMAPPER_SOURCES = LidarProcessOctree.cpp \
-                           LidarColorMapper.cpp
-
-$(EXEDIR)/LidarColorMapper: PACKAGES += MYIMAGES
-$(EXEDIR)/LidarColorMapper: $(LIDARCOLORMAPPER_SOURCES:%.cpp=$(OBJDIR)/%.o)
-.PHONY: LidarColorMapper
-LidarColorMapper: $(EXEDIR)/LidarColorMapper
 
 PAULBUNYAN_SOURCES = LidarProcessOctree.cpp \
                      PaulBunyan.cpp
@@ -204,7 +185,6 @@ LIDARVIEWER_SOURCES = LidarOctree.cpp \
 $(OBJDIR)/LidarViewer.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
 
 $(EXEDIR)/LidarViewer: PACKAGES += MYVRUI
-# $(EXEDIR)/LidarViewer: CFLAGS += -DVISUALIZE_WATER
 $(EXEDIR)/LidarViewer: $(LIDARVIEWER_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarViewer
 LidarViewer: $(EXEDIR)/LidarViewer

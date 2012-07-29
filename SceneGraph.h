@@ -1,6 +1,6 @@
 /***********************************************************************
 SceneGraph - Helper functions to manage and render a global scene graph.
-Copyright (c) 2009-2013 Oliver Kreylos
+Copyright (c) 2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 

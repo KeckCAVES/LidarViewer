@@ -1,6 +1,6 @@
 /***********************************************************************
 SceneGraph - Helper functions to manage and render a global scene graph.
-Copyright (c) 2009-2013 Oliver Kreylos
+Copyright (c) 2009 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,8 +26,8 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Geometry/Vector.h>
 #include <Geometry/OrthogonalTransformation.h>
 #include <GL/gl.h>
+#include <SceneGraph/GLRenderState.h>
 #include <Vrui/Vrui.h>
-#include <Vrui/SceneGraphSupport.h>
 
 namespace {
 
@@ -55,8 +55,15 @@ SceneGraph::GroupNode& getSceneGraphRoot(void)
 
 void renderSceneGraph(GLContextData& contextData)
 	{
-	/* Render the scene graph: */
-	Vrui::renderSceneGraph(root.getPointer(),true,contextData);
+	glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_TEXTURE_BIT);
+	
+	/* Create a render state to traverse the scene graph: */
+	SceneGraph::GLRenderState renderState(contextData,Vrui::getHeadPosition(),Vrui::getNavigationTransformation().inverseTransform(Vrui::getUpDirection()));
+	
+	/* Traverse the scene graph: */
+	root->glRenderAction(renderState);
+	
+	glPopAttrib();
 	}
 
 void destroySceneGraph(void)

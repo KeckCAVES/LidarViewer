@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2013 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -52,7 +52,6 @@ template <class ScalarParam>
 class GLFrustum;
 template <class NodeParam>
 class CoarseningHeap;
-class PointBasedLightingShader;
 
 class LidarOctree:public GLObject
 	{
@@ -241,8 +240,6 @@ class LidarOctree:public GLObject
 	Point fncCenter; // Center point of focus region
 	Scalar fncRadius; // Radius of focus region
 	Scalar fncWeight; // Weight for focus+context LOD adjustment
-	float baseSurfelSize; // Base splat size for leaf nodes
-	float surfelScale; // Scale factor applied to adjusted splat size
 	unsigned int cacheSize; // Maximum number of nodes to hold in memory at any time
 	unsigned int glCacheSize; // Maximum number of nodes to hold in graphics card memory at any time
 	unsigned int numCachedNodes; // Number of nodes currently in the memory cache
@@ -263,7 +260,7 @@ class LidarOctree:public GLObject
 	mutable CoarseningHeap<Node>* coarseningHeap; // Heap of nodes that are candidates for coarsening
 	
 	/* Private methods: */
-	void renderSubTree(const Node* node,const Frustum& frustum,PointBasedLightingShader& pbls,DataItem* dataItem) const;
+	void renderSubTree(const Node* node,const Frustum& frustum,DataItem* dataItem) const;
 	void interactWithSubTree(Node* node,const Interactor& interactor); // Prepares a subtree for interaction with an interactor
 	template <class VertexParam>
 	bool selectPoint(Node* node,unsigned int pointIndex); // Selects the given point in the given node; returns true if selection changed
@@ -295,7 +292,7 @@ class LidarOctree:public GLObject
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlCacheSize); // Creates octree from the given LiDAR file; cache sizes are in bytes
+	LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize); // Creates octree from the given LiDAR file; cache sizes are in bytes
 	virtual ~LidarOctree(void);
 	
 	/* Methods: */
@@ -313,9 +310,8 @@ class LidarOctree:public GLObject
 	void setTreeUpdateFunction(TreeUpdateFunction newTreeUpdateFunction,void* newTreeUpdateFunctionArg);
 	void setRenderQuality(Scalar qualityLevel); // Sets the quality level for rendering, 0 is normal quality
 	void setFocusAndContext(const Point& newFncCenter,Scalar newFncRadius,Scalar newFncWeight); // Adjusts focus+context LOD adjustment parameters
-	void setBaseSurfelSize(float newBaseSurfelSize,float newSurfelScale); // Sets the splat size for leaf nodes
 	void startRenderPass(void); // Starts the next rendering pass of the point octree
-	void glRenderAction(const Frustum& frustum,PointBasedLightingShader& pbls,GLContextData& contextData) const;
+	void glRenderAction(const Frustum& frustum,GLContextData& contextData) const;
 	void intersectCone(ConeIntersection& cone) const; // Intersects a cone with all points in the current octree
 	void interact(const Interactor& interactor); // Prepares an octree for interaction with an interactor
 	void selectPoints(const Interactor& interactor); // Selects all points inside the interactor's region of influence

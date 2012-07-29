@@ -1,6 +1,6 @@
 /***********************************************************************
 New version of LiDAR data preprocessor.
-Copyright (c) 2005-2014 Oliver Kreylos
+Copyright (c) 2005-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -931,15 +931,13 @@ int main(int argc,char* argv[])
 	int asciiColumnIndices[6];
 	unsigned int lasClassMask=~0x0U;
 	int numHeaderLines=0;
-	const char* plyColorNames[3]=
-		{
-		"red","green","blue"
-		};
 	bool havePoints=false;
 	
 	/* Parse the command line and load all input files: */
 	Misc::Timer loadTimer;
 	PointAccumulator pa;
+	pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
+	pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -972,7 +970,10 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
+					{
 					memoryCacheSize=(unsigned int)(atoi(argv[i]));
+					pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
+					}
 				else
 					std::cerr<<"Dangling -ooc flag on command line"<<std::endl;
 				}
@@ -982,7 +983,10 @@ int main(int argc,char* argv[])
 				if(i<argc)
 					{
 					if(!havePoints)
+						{
 						tempOctreeFileNameTemplate=argv[i];
+						pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
+						}
 					else
 						std::cerr<<"Ignoring -to flag; must be specified before any input point sets are read"<<std::endl;
 					}
@@ -1083,22 +1087,6 @@ int main(int argc,char* argv[])
 				pointFileType=BINRGB;
 			else if(strcasecmp(argv[i]+1,"ply")==0)
 				pointFileType=PLY;
-			else if(strcasecmp(argv[i]+1,"plyColorNames")==0)
-				{
-				if(i+3<argc)
-					{
-					for(int j=0;j<3;++j)
-						{
-						++i;
-						plyColorNames[j]=argv[i];
-						}
-					}
-				else
-					{
-					i=argc;
-					std::cerr<<"Dangling -plyColorNames flag on command line"<<std::endl;
-					}
-				}
 			else if(strcasecmp(argv[i]+1,"las")==0)
 				pointFileType=LAS;
 			else if(strcasecmp(argv[i]+1,"lasClasses")==0)
@@ -1235,13 +1223,6 @@ int main(int argc,char* argv[])
 					thisPointFileType=ILLEGAL;
 				}
 			
-			if(thisPointFileType!=ILLEGAL&&!havePoints)
-				{
-				/* Initialize the point accumulator: */
-				pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
-				pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
-				}
-			
 			/* Reset the point accumulator's spatial and color extents: */
 			pa.resetExtents();
 			
@@ -1263,7 +1244,7 @@ int main(int argc,char* argv[])
 				
 				case PLY:
 					std::cout<<"Processing PLY input file "<<argv[i]<<"..."<<std::flush;
-					readPlyFile(pa,argv[i],plyColorNames);
+					readPlyFile(pa,argv[i]);
 					havePoints=true;
 					std::cout<<" done."<<std::endl;
 					break;
@@ -1364,7 +1345,7 @@ int main(int argc,char* argv[])
 	/* Check if an output file name was given: */
 	if(outputFileName==0)
 		{
-		std::cerr<<"Usage: "<<argv[0]<<" -o <output file name stem> [<option 1>] ... [<option n>] <input file spec 1> ... <input file spec n>"<<std::endl;
+		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> [<option 1>] ... [<option n>] <input file spec 1> ... <input file spec n>"<<std::endl;
 		std::cerr<<"Options: -np <max points per node>"<<std::endl;
 		std::cerr<<"         -nt <number of threads>"<<std::endl;
 		std::cerr<<"         -ooc <memory cache size in MB>"<<std::endl;
@@ -1373,7 +1354,6 @@ int main(int argc,char* argv[])
 		std::cerr<<"         -lasOffset <offset x> <offset y> <offset z>"<<std::endl;
 		std::cerr<<"         -lasOffsetFile <binary offset file name>"<<std::endl;
 		std::cerr<<"         -noLasOffset"<<std::endl;
-		std::cerr<<"         -plyColorNames <red component name> <green component name> <blue component name>"<<std::endl;
 		std::cerr<<"         -transform <orthogonal transformation specification>"<<std::endl;
 		std::cerr<<"Input file spec: [-c <red> <green> <blue>] [-header <number of header lines>] <format spec> <file name>"<<std::endl;
 		std::cerr<<"Format spec: -AUTO"<<std::endl;
@@ -1409,7 +1389,7 @@ int main(int argc,char* argv[])
 	
 	/* Write the octree structure and data to the destination LiDAR file: */
 	Misc::Timer writeTimer;
-	tree.write(size_t(memoryCacheSize)*size_t(1024*1024),outputFileName);
+	tree.write(outputFileName);
 	writeTimer.elapse();
 	
 	/* Check if a point offset was defined: */

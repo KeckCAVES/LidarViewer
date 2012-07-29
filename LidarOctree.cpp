@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2013 Oliver Kreylos
+Copyright (c) 2005-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,7 +27,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <iomanip>
 #include <Misc/ThrowStdErr.h>
-#include <Misc/SelfDestructArray.h>
 #include <Geometry/Ray.h>
 #include <Geometry/Box.h>
 #include <GL/gl.h>
@@ -39,7 +38,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLFrustum.h>
 
 #include "CoarseningHeap.h"
-#include "PointBasedLightingShader.h"
 
 /**********************************
 Methods of class LidarOctree::Node:
@@ -269,14 +267,15 @@ LidarOctree::DataItem::~DataItem(void)
 Methods of class LidarOctree:
 ****************************/
 
-void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree::Frustum& frustum,PointBasedLightingShader& pbls,LidarOctree::DataItem* dataItem) const
+void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree::Frustum& frustum,LidarOctree::DataItem* dataItem) const
 	{
 	/* Bail out if the node is empty: */
 	if(node->numPoints==0)
 		return;
 	
 	/* Check if this node intersects the view frustum: */
-	for(int plane=0;plane<6;++plane)
+	bool inside=true;
+	for(int plane=0;plane<6&&inside;++plane)
 		{
 		const Frustum::Plane::Vector& normal=frustum.getFrustumPlane(plane).getNormal();
 		
@@ -285,10 +284,13 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		for(int i=0;i<3;++i)
 			p[i]=normal[i]>Scalar(0)?node->domain.getMax()[i]:node->domain.getMin()[i];
 		
-		/* Bail out if the point is not inside the view frustum: */
-		if(frustum.getFrustumPlane(plane).contains(p))
-			return;
+		/* Check if the point is inside the view frustum: */
+		inside=!frustum.getFrustumPlane(plane).contains(p);
 		}
+	
+	/* Bail out if this node is not inside the view frustum: */
+	if(!inside)
+		return;
 	
 	/* Find the point inside the node that is closest to the focus+context center: */
 	Point nodeFncPoint=fncCenter;
@@ -366,7 +368,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			/* Render the node's children: */
 			// for(int i=7;i>=0;--i) // Back-to-front rendering
 			for(int i=0;i<8;++i) // Front-to-back rendering
-				renderSubTree(&node->children[i^childIndex],frustum,pbls,dataItem);
+				renderSubTree(&node->children[i^childIndex],frustum,dataItem);
 			
 			/* Done here... */
 			return;
@@ -508,13 +510,6 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			}
 		dataItem->numBypassedPoints+=node->numPoints;
 		}
-	
-	/* Set this node's splat size: */
-	#if 0
-	pbls.setSurfelSize((baseSurfelSize+node->detailSize)*surfelScale); // For old fixed-size surfels
-	#else
-	pbls.setSurfelSize(baseSurfelSize*surfelScale); // For new adaptive surfels
-	#endif
 	
 	/* Render this node's point set: */
 	if(vertexBufferObjectId!=0)
@@ -810,101 +805,99 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 	if(node->haveNormals)
 		{
 		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
-		Misc::SelfDestructArray<NVertex> points(maxNumPointsPerNode);
+		NVertex* points=new NVertex[maxNumPointsPerNode];
+		node->points=points;
 		
 		/* Load the node's points into a temporary point buffer: */
-		Misc::SelfDestructArray<LidarPoint> pointsBuffer(maxNumPointsPerNode);
+		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
 		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
-		pointsFile.read(pointsBuffer.getArray(),node->numPoints);
-		Misc::SelfDestructArray<Vector> normalsBuffer(maxNumPointsPerNode);
+		pointsFile.read(pointsBuffer,node->numPoints);
+		Vector* normalsBuffer=new Vector[maxNumPointsPerNode];
 		normalsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
-		normalsFile->read(normalsBuffer.getArray(),node->numPoints);
+		normalsFile->read(normalsBuffer,node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
-			Misc::SelfDestructArray<Color> colorsBuffer(maxNumPointsPerNode);
+			Color* colorsBuffer=new Color[maxNumPointsPerNode];
 			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
-			colorsFile->read(colorsBuffer.getArray(),node->numPoints);
+			colorsFile->read(colorsBuffer,node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
-			LidarPoint* pPtr=pointsBuffer.getArray();
-			Color* cPtr=colorsBuffer.getArray();
-			for(unsigned int i=0;i<node->numPoints;++i,++pPtr,++cPtr)
+			for(unsigned int i=0;i<node->numPoints;++i)
 				for(int j=0;j<4;++j)
-					pPtr->value[j]=(*cPtr)[j];
+					pointsBuffer[i].value[j]=colorsBuffer[i][j];
+			
+			/* Clean up: */
+			delete[] colorsBuffer;
 			}
 		
 		/* Convert the LiDAR points to render points: */
-		NVertex* npPtr=points.getArray();
-		const LidarPoint* pPtr=pointsBuffer.getArray();
-		const Vector* nPtr=normalsBuffer.getArray();
-		for(unsigned int i=0;i<node->numPoints;++i,++npPtr,++pPtr,++nPtr)
+		for(unsigned int i=0;i<node->numPoints;++i)
 			{
 			/* Copy the point color: */
 			for(int j=0;j<4;++j)
-				npPtr->color[j]=pPtr->value[j];
+				points[i].color[j]=pointsBuffer[i].value[j];
 			
 			/* Copy the normal vector: */
-			npPtr->normal=*nPtr;
+			points[i].normal=normalsBuffer[i];
 			
 			/* Copy the point position: */
-			npPtr->position=*pPtr;
-			
+			points[i].position=pointsBuffer[i];
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			npPtr->position-=pointOffset;
+			points[i].position-=pointOffset;
 			#endif
 			}
 		
-		/* Store the new point array in the node: */
-		node->points=points.releaseTarget();
+		/* Clean up: */
+		delete[] pointsBuffer;
+		delete[] normalsBuffer;
 		}
 	else
 		{
 		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
-		Misc::SelfDestructArray<Vertex> points(maxNumPointsPerNode);
+		Vertex* points=new Vertex[maxNumPointsPerNode];
+		node->points=points;
 		
 		/* Load the node's points into a temporary point buffer: */
-		Misc::SelfDestructArray<LidarPoint> pointsBuffer(maxNumPointsPerNode);
+		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
 		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
-		pointsFile.read(pointsBuffer.getArray(),node->numPoints);
+		pointsFile.read(pointsBuffer,node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
-			Misc::SelfDestructArray<Color> colorsBuffer(maxNumPointsPerNode);
+			Color* colorsBuffer=new Color[maxNumPointsPerNode];
 			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
-			colorsFile->read(colorsBuffer.getArray(),node->numPoints);
+			colorsFile->read(colorsBuffer,node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
-			LidarPoint* pPtr=pointsBuffer.getArray();
-			Color* cPtr=colorsBuffer.getArray();
-			for(unsigned int i=0;i<node->numPoints;++i,++pPtr,++cPtr)
+			for(unsigned int i=0;i<node->numPoints;++i)
 				for(int j=0;j<4;++j)
-					pPtr->value[j]=(*cPtr)[j];
+					pointsBuffer[i].value[j]=colorsBuffer[i][j];
+			
+			/* Clean up: */
+			delete[] colorsBuffer;
 			}
 		
 		/* Convert the LiDAR points to render points: */
-		Vertex* npPtr=points.getArray();
-		const LidarPoint* pPtr=pointsBuffer.getArray();
-		for(unsigned int i=0;i<node->numPoints;++i,++npPtr,++pPtr)
+		for(unsigned int i=0;i<node->numPoints;++i)
 			{
 			/* Copy the point color: */
 			for(int j=0;j<4;++j)
-				npPtr->color[j]=pPtr->value[j];
+				points[i].color[j]=pointsBuffer[i].value[j];
 			
 			/* Copy the point position: */
-			npPtr->position=*pPtr;
-			
+			points[i].position=pointsBuffer[i];
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			npPtr->position-=pointOffset;
+			points[i].position-=pointOffset;
 			#endif
 			}
 		
-		/* Store the new point array in the node: */
-		node->points=points.releaseTarget();
+		/* Clean up: */
+		delete[] pointsBuffer;
 		}
 	}
 
@@ -1015,68 +1008,50 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 		
 		/* Create the node's children: */
 		Node* children=new Node[8];
-		bool childrenOk=true;
-		
-		try
+		indexFile.setReadPosAbs(node->childrenOffset);
+		for(int childIndex=0;childIndex<8;++childIndex)
 			{
-			indexFile.setReadPosAbs(node->childrenOffset);
-			for(int childIndex=0;childIndex<8;++childIndex)
-				{
-				LidarOctreeFileNode ofn;
-				ofn.read(indexFile);
-				children[childIndex].parent=node;
-				children[childIndex].childrenOffset=ofn.childrenOffset;
-				children[childIndex].domain=Cube(node->domain,childIndex);
-				children[childIndex].radius=Math::div2(node->radius);
-				children[childIndex].numPoints=ofn.numPoints;
-				children[childIndex].haveNormals=node->haveNormals;
-				children[childIndex].dataOffset=ofn.dataOffset;
-				children[childIndex].detailSize=ofn.detailSize;
-				children[childIndex].subdivisionQueueIndex=subdivisionRequestQueueLength;
-				}
-
-			/* Load the node's children's point data: */
-			for(int childIndex=0;childIndex<8;++childIndex)
-				loadNodePoints(&children[childIndex]);
-			}
-		catch(std::runtime_error err)
-			{
-			/* Something went wrong while loading the children's data from disk: */
-			childrenOk=false;
+			LidarOctreeFileNode ofn;
+			ofn.read(indexFile);
+			children[childIndex].parent=node;
+			children[childIndex].childrenOffset=ofn.childrenOffset;
+			children[childIndex].domain=Cube(node->domain,childIndex);
+			children[childIndex].radius=Math::div2(node->radius);
+			children[childIndex].numPoints=ofn.numPoints;
+			children[childIndex].haveNormals=node->haveNormals;
+			children[childIndex].dataOffset=ofn.dataOffset;
+			children[childIndex].detailSize=ofn.detailSize;
+			children[childIndex].subdivisionQueueIndex=subdivisionRequestQueueLength;
 			}
 		
-		if(childrenOk)
+		/* Load the node's children's point data: */
+		for(int childIndex=0;childIndex<8;++childIndex)
+			loadNodePoints(&children[childIndex]);
+		
+		{
+		Threads::Mutex::Lock nodeSelectionLock(node->selectionMutex);
+		if(node->selectedPoints!=0)
 			{
-			{
-			Threads::Mutex::Lock nodeSelectionLock(node->selectionMutex);
-			if(node->selectedPoints!=0)
-				{
-				/* Propagate selected points from the node to its children: */
-				if(node->haveNormals)
-					propagateSelectedPoints<NVertex>(node,children);
-				else
-					propagateSelectedPoints<Vertex>(node,children);
-				}
+			/* Propagate selected points from the node to its children: */
+			if(node->haveNormals)
+				propagateSelectedPoints<NVertex>(node,children);
+			else
+				propagateSelectedPoints<Vertex>(node,children);
 			}
-			
-			/* Add the new child nodes to the ready list: */
-			{
-			Threads::Mutex::Lock readyNodesLock(readyNodesMutex);
-			readyNodes.push_back(children);
-			}
-			
-			/* Notify a user program: */
-			{
-			Threads::Mutex::Lock treeUpdateFunctionLock(treeUpdateFunctionMutex);
-			if(treeUpdateFunction!=0)
-				treeUpdateFunction(treeUpdateFunctionArg);
-			}
-			}
-		else
-			{
-			/* Delete the child nodes again and carry on: */
-			delete[] children;
-			}
+		}
+		
+		/* Add the new child nodes to the ready list: */
+		{
+		Threads::Mutex::Lock readyNodesLock(readyNodesMutex);
+		readyNodes.push_back(children);
+		}
+		
+		/* Notify a user program: */
+		{
+		Threads::Mutex::Lock treeUpdateFunctionLock(treeUpdateFunctionMutex);
+		if(treeUpdateFunction!=0)
+			treeUpdateFunction(treeUpdateFunctionArg);
+		}
 		}
 	
 	return 0;
@@ -1098,7 +1073,7 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 
 }
 
-LidarOctree::LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlCacheSize)
+LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize)
 	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str()),
 	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str()),
 	 normalsFile(0),
@@ -1108,7 +1083,7 @@ LidarOctree::LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlC
 	 numCachedNodes(0),
 	 renderPass(0U),
 	 treeUpdateFunction(0),treeUpdateFunctionArg(0),
-	 subdivisionRequestQueueLength(16),subdivisionRequestQueue(new SubdivisionRequest[subdivisionRequestQueueLength]),
+	 subdivisionRequestQueueLength(4),subdivisionRequestQueue(new SubdivisionRequest[subdivisionRequestQueueLength]),
 	 coarseningHeap(0)
 	{
 	/* Check if there is a normal vector file: */
@@ -1272,12 +1247,6 @@ void LidarOctree::setFocusAndContext(const Point& newFncCenter,Scalar newFncRadi
 	fncWeight=newFncWeight;
 	}
 
-void LidarOctree::setBaseSurfelSize(float newBaseSurfelSize,float newSurfelScale)
-	{
-	baseSurfelSize=newBaseSurfelSize;
-	surfelScale=newSurfelScale;
-	}
-
 void LidarOctree::startRenderPass(void)
 	{
 	{
@@ -1393,7 +1362,7 @@ void LidarOctree::startRenderPass(void)
 	// std::cout<<numCachedNodes<<"   ";
 	}
 
-void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,PointBasedLightingShader& pbls,GLContextData& contextData) const
+void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextData& contextData) const
 	{
 	/* Retrieve the context data item: */
 	DataItem* dataItem=contextData.retrieveDataItem<DataItem>(this);
@@ -1420,7 +1389,7 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,PointBasedL
 	dataItem->numCacheBypasses=0;
 	dataItem->numRenderedPoints=0;
 	dataItem->numBypassedPoints=0;
-	renderSubTree(&root,frustum,pbls,dataItem);
+	renderSubTree(&root,frustum,dataItem);
 	
 	/* Reset OpenGL state: */
 	#if 0

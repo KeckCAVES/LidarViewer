@@ -1,6 +1,6 @@
 /***********************************************************************
 ReadPlyFile - Function to read 3D polygon files in PLY format.
-Copyright (c) 2004-2014 Oliver Kreylos
+Copyright (c) 2004-2011 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,6 +26,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 /* Forward declarations: */
 class PointAccumulator;
 
-void readPlyFile(PointAccumulator& pa,const char* fileName,const char* plyColorNames[3]);
+void readPlyFile(PointAccumulator& pa,const char* fileName);
 
 #endif
