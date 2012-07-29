@@ -27,6 +27,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <utility>
 #include <iostream>
 #include <iomanip>
+#include <Misc/Timer.h>
 #include <Math/Constants.h>
 
 #include "TempOctree.h"
@@ -41,8 +42,10 @@ void PointAccumulator::savePoints(void)
 	std::cout<<std::endl<<"Storing "<<points.size()<<" points as temporary octree..."<<std::flush;
 	char tofnt[1024];
 	strcpy(tofnt,tempOctreeFileNameTemplate.c_str());
+	Misc::Timer t;
 	TempOctree* to=new TempOctree(tofnt,maxNumPointsPerNode,&points[0],points.size());
-	std::cout<<" done"<<std::endl;
+	t.elapse();
+	std::cout<<" done in "<<t.getTime()*1000.0<<" ms"<<std::endl;
 	tempOctrees.push_back(to);
 	
 	/* Clear the point set: */

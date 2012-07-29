@@ -707,32 +707,14 @@ LidarGridder::LidarGridder(int& argc,char**& argv,char**& appDefaults)
 	lpo=new LidarProcessOctree(lidarFileName,cacheSize*1024*1024);
 	lpoDomain=lpo->getDomain();
 	
-	{
-	/* Check if the LiDAR data set has an offset file: */
-	std::string offsetFileName(lidarFileName);
-	offsetFileName.append("/Offset");
-	try
+	/* Offset the grid box to octree coordinates: */
+	for(int i=0;i<2;++i)
 		{
-		/* Read the offset values: */
-		Misc::File offsetFile(offsetFileName.c_str(),"rb",Misc::File::LittleEndian);
-		offsetFile.read<double>(lpoOffset,3);
-		
-		/* Convert the given grid box to octree coordinates: */
-		for(int i=0;i<2;++i)
-			{
-			if(gridBox.min[i]!=Geometry::Box<double,2>::full.min[i])
-				gridBox.min[i]+=lpoOffset[i];
-			if(gridBox.max[i]!=Geometry::Box<double,2>::full.max[i])
-				gridBox.max[i]+=lpoOffset[i];
-			}
+		if(gridBox.min[i]!=Geometry::Box<double,2>::full.min[i])
+			gridBox.min[i]-=lpo->getOffset()[i];
+		if(gridBox.max[i]!=Geometry::Box<double,2>::full.max[i])
+			gridBox.max[i]-=lpo->getOffset()[i];
 		}
-	catch(Misc::File::OpenError err)
-		{
-		/* Set offset to zero: */
-		for(int i=0;i<3;++i)
-			lpoOffset[i]=0.0;
-		}
-	}
 	
 	/* Limit the grid box to the LiDAR data set's domain: */
 	for(int i=0;i<2;++i)
@@ -982,6 +964,10 @@ int main(int argc,char* argv[])
 	/* Open the LiDAR data set: */
 	LidarProcessOctree lpo(lidarFileName,cacheSize*1024*1024);
 	const Cube& domain=lpo.getDomain();
+	
+	/* Transform the grid origin to octree coordinates: */
+	for(int i=0;i<2;++i)
+		gridOrigin[i]-=lpo->getPointOffset()[i];
 	
 	/* Sample the grid: */
 	std::cout<<"Sampling grid...   0%"<<std::flush;

@@ -1,7 +1,7 @@
 /***********************************************************************
 LinePrimitive - Class for lines extracted from point clouds by
 intersecting two plane primitives.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -303,7 +303,7 @@ LinePrimitive::LinePrimitive(const PlanePrimitive* p1,const PlanePrimitive* p2,c
 		}
 	}
 
-LinePrimitive::LinePrimitive(const LidarOctree* octree,Cluster::MulticastPipe* pipe)
+LinePrimitive::LinePrimitive(const LidarOctree* octree,const Vector& translation,Cluster::MulticastPipe* pipe)
 	{
 	/* Create a LiDAR line extractor: */
 	LidarLineExtractor lle;
@@ -339,7 +339,9 @@ LinePrimitive::LinePrimitive(const LidarOctree* octree,Cluster::MulticastPipe* p
 		
 		/* Print the line's equation: */
 		std::cout<<"Line fitting "<<numPoints<<" points"<<std::endl;
-		std::cout<<"Center point: ("<<center[0]<<", "<<center[1]<<", "<<center[2]<<")"<<std::endl;
+		Point tCenter=center;
+		tCenter+=translation;
+		std::cout<<"Center point: ("<<tCenter[0]<<", "<<tCenter[1]<<", "<<tCenter[2]<<")"<<std::endl;
 		std::cout<<"Axis direction: ("<<axis[0]<<", "<<axis[1]<<", "<<axis[2]<<")"<<std::endl;
 		std::cout<<"Length: "<<length<<std::endl;
 		std::cout<<"RMS approximation residual: "<<rms<<std::endl;

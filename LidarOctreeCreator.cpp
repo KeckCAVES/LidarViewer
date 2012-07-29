@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarOctreeCreator - Class to create LiDAR octrees from point clouds
 using an out-of-core algorithm.
-Copyright (c) 2007-2011 Oliver Kreylos
+Copyright (c) 2007-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -33,6 +33,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iomanip>
 #include <Misc/ThrowStdErr.h>
 #include <Misc/PriorityHeap.h>
+#include <Threads/Thread.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
 #include <Geometry/ArrayKdTree.h>
@@ -166,21 +167,27 @@ struct NeighborPair
 Methods of class PointOctreeCreator:
 ***********************************/
 
-void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node,unsigned int level)
+void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node)
 	{
+	/* Get the temporary point file responsible for the node's level: */
+	TempPointFile* tpf=0;
+	{
+	Threads::Mutex::Lock tempPointFilesLock(tempPointFilesMutex);
+	
 	/* Check if the current level is bigger than the previous maximum level in the tree: */
-	if(maxLevel<level)
+	if(maxLevel<node.level)
 		{
 		/* Add new temporary point file structures to the vector: */
-		for(unsigned int i=maxLevel+1;i<=level;++i)
-			tempPointFiles.push_back(TempPointFile());
+		for(unsigned int i=maxLevel+1;i<=node.level;++i)
+			tempPointFiles.push_back(new TempPointFile);
 		
 		/* Remember the maximum tree level: */
-		maxLevel=level;
+		maxLevel=node.level;
 		}
 	
 	/* Check if the temporary point file for this level needs to be created: */
-	if(tempPointFiles[level].file==0)
+	tpf=tempPointFiles[node.level];
+	if(tpf->file==0)
 		{
 		/* Create a temporary point file name: */
 		char fnt[1024];
@@ -190,24 +197,33 @@ void LidarOctreeCreator::writeNodePoints(LidarOctreeCreator::Node& node,unsigned
 			Misc::throwStdErr("LidarOctreeCreator::writeNodePoints: Unable to open temporary point file %s",fnt);
 		
 		/* Create the temporary point file: */
-		tempPointFiles[level].file=new TempFile(pointFileFd,TempFile::ReadWrite);
-		tempPointFiles[level].fileName=fnt;
+		tpf->file=new TempFile(pointFileFd,TempFile::ReadWrite);
+		tpf->fileName=fnt;
 		}
 	
-	/* Sort the node's points into a temporary kd-tree: */
-	typedef Geometry::ArrayKdTree<LidarPoint> KdTree;
-	KdTree pointTree(node.numPoints);
-	LidarPoint* tpPtr=pointTree.accessPoints();
-	for(unsigned int i=0;i<node.numPoints;++i)
-		tpPtr[i]=node.points[i];
-	pointTree.releasePoints();
+	}
+	
+	/* Sort the node's points into kd-tree order in-place: */
+	Geometry::ArrayKdTree<LidarPoint> pointTree;
+	pointTree.donatePoints(node.numPoints,node.points);
+	LidarPoint* nodePoints=pointTree.detachPoints();
 	
 	/* Write the node's points to the appropriate point file: */
-	node.pointsOffset=tempPointFiles[level].file->getWritePos();
-	tempPointFiles[level].file->write(pointTree.accessPoints(),node.numPoints);
+	{
+	Threads::Mutex::Lock tempPointFileLock(tpf->mutex);
+	node.pointsOffset=tpf->file->getWritePos();
+	tpf->file->write(nodePoints,node.numPoints);
+	}
+	
+	/* Delete the node's points: */
+	if(node.pointsPrivate)
+		{
+		node.pointsPrivate=false;
+		delete[] nodePoints;
+		}
 	}
 
-void LidarOctreeCreator::subsample(LidarOctreeCreator::Node& node,bool deleteAllPoints)
+void LidarOctreeCreator::subsample(LidarOctreeCreator::Node& node)
 	{
 	typedef Geometry::ArrayKdTree<LidarPoint> KdTree;
 	
@@ -223,15 +239,15 @@ void LidarOctreeCreator::subsample(LidarOctreeCreator::Node& node,bool deleteAll
 	for(int childIndex=0;childIndex<8;++childIndex)
 		{
 		Node& child=node.children[childIndex];
+		
+		/* Copy the child's point set: */
 		if(largestCollapsedDetail<child.detailSize)
 			largestCollapsedDetail=child.detailSize;
 		for(unsigned int i=0;i<child.numPoints;++i,++tpPtr)
 			*tpPtr=child.points[i];
 		
-		/* Delete the child's point set if it has private points: */
-		if(deleteAllPoints||child.children!=0)
-			delete[] child.points;
-		child.points=0;
+		/* Write the child node to file: */
+		writeNodePoints(child);
 		}
 	pointTree->releasePoints();
 	
@@ -317,8 +333,14 @@ void LidarOctreeCreator::subsample(LidarOctreeCreator::Node& node,bool deleteAll
 	
 	/* Store the leftover points in the node's point array: */
 	node.detailSize=largestCollapsedDetail;
+	if(node.points!=0&&node.numPoints<numPointsLeft)
+		std::cerr<<"Bad subsampling result"<<std::endl;
 	node.numPoints=numPointsLeft;
-	node.points=new LidarPoint[numPointsLeft];
+	if(node.points==0)
+		{
+		node.pointsPrivate=true;
+		node.points=new LidarPoint[numPointsLeft];
+		}
 	LidarPoint* npPtr=node.points;
 	for(unsigned int i=0;i<totalNumPoints;++i)
 		if(!removeFlags[i])
@@ -333,7 +355,41 @@ void LidarOctreeCreator::subsample(LidarOctreeCreator::Node& node,bool deleteAll
 		maxNumPointsPerInteriorNode=node.numPoints;
 	}
 
-void LidarOctreeCreator::createSubTree(LidarOctreeCreator::Node& node,const Cube& nodeDomain,unsigned int level)
+void* LidarOctreeCreator::subsampleThreadMethod(void)
+	{
+	Node* node=0;
+	while(true)
+		{
+		if(node==0)
+			{
+			/* Get the next request from the subsampling queue: */
+			node=subsampleQueue.pop();
+			
+			/* Check for queue-end sentinel value: */
+			if(node==0)
+				break;
+			}
+		
+		/* Subsample the requested node: */
+		subsample(*node);
+		
+		/* Update the parent node's ready counter: */
+		if(node->parent!=0&&node->parent->numChildrenDone.preAdd(1)==8)
+			{
+			/* Subsample the parent node right away: */
+			node=node->parent;
+			}
+		else
+			{
+			/* Grab another subsample request from the subsample queue: */
+			node=0;
+			}
+		}
+	
+	return 0;
+	}
+
+void LidarOctreeCreator::createSubTree(LidarOctreeCreator::Node& node,const Cube& nodeDomain)
 	{
 	/* Get an upper bound on the number of points contained in this node's domain: */
 	size_t numPointsBound=0;
@@ -349,67 +405,68 @@ void LidarOctreeCreator::createSubTree(LidarOctreeCreator::Node& node,const Cube
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			Node& child=node.children[childIndex];
-			createSubTree(child,Cube(nodeDomain,childIndex),level+1);
+			child.parent=&node;
+			child.level=node.level+1;
+			createSubTree(child,Cube(nodeDomain,childIndex));
 			}
-		
-		/* Subsample the children's point sets: */
-		subsample(node,true);
-		
-		/* Save the node's points to the temporary point file for the node's level: */
-		writeNodePoints(node,level);
 		}
 	else if(numPointsBound>0)
 		{
 		/* Get the actual points contained in this node's domain: */
 		//std::cout<<"Loading points from temporary octrees..."<<std::flush;
-		TempOctree::LidarPointList points;
-		points.reserve(maxNumCachablePoints);
+		node.pointsPrivate=true;
+		node.points=new LidarPoint[numPointsBound];
+		LidarPoint* pPtr=node.points;
 		for(TempOctreeList::const_iterator toIt=tempOctrees.begin();toIt!=tempOctrees.end();++toIt)
-			(*toIt)->getPointsInCube(nodeDomain,points);
-		totalNumReadPoints+=points.size();
-		//std::cout<<" done reading "<<points.size()<<" points"<<std::endl;
+			pPtr=(*toIt)->getPointsInCube(nodeDomain,pPtr);
+		node.numPoints=(unsigned int)(pPtr-node.points);
+		if(node.numPoints>numPointsBound)
+			std::cerr<<"Too many points collected from temporary octrees"<<std::endl;
+		totalNumReadPoints+=node.numPoints;
+		//std::cout<<" done reading "<<numPoints<<" points"<<std::endl;
 		std::cout<<"\rCreating octree... "<<Math::floor(double(totalNumReadPoints)*100.0/double(totalNumPoints)+0.5)<<"% done"<<std::flush;
 		
-		/* Call the subtree creation method for this node again, this time with the actual points: */
-		createSubTreeWithPoints(node,nodeDomain,&points[0],points.size(),level);
-		
-		/* If this node is a leaf, we need to copy its points so they don't get deleted with the vector: */
-		if(node.children==0)
+		/* Process the node again using the second-stage method: */
+		createSubTreeWithPoints(node,nodeDomain);
+		}
+	else
+		{
+		/* This node is empty; update the parent node's ready counter: */
+		if(node.parent!=0&&node.parent->numChildrenDone.preAdd(1)==8)
 			{
-			LidarPoint* newPoints=new LidarPoint[node.numPoints];
-			for(unsigned int i=0;i<node.numPoints;++i)
-				newPoints[i]=node.points[i];
-			node.points=newPoints;
+			/* Subsample the parent node: */
+			subsampleQueue.push(node.parent);
+			}
+		}
+	}
+
+void LidarOctreeCreator::createSubTreeWithPoints(LidarOctreeCreator::Node& node,const Cube& nodeDomain)
+	{
+	/* Check if the number of points is smaller than the maximum: */
+	if(node.numPoints<=size_t(maxNumPointsPerNode))
+		{
+		/* Create a leaf node: */
+		if(node.numPoints>0&&node.points==0)
+			std::cerr<<"Bad node at "<<&node<<std::endl;
+		if(maxNumPointsPerInteriorNode<node.numPoints)
+			maxNumPointsPerInteriorNode=node.numPoints;
+		
+		/* Update the parent node's ready counter: */
+		if(node.parent!=0&&node.parent->numChildrenDone.preAdd(1)==8)
+			{
+			/* Subsample the parent node: */
+			subsampleQueue.push(node.parent);
 			}
 		}
 	else
 		{
-		/* Create an empty leaf node: */
-		node.detailSize=0.0f;
-		node.numPoints=0;
-		node.points=0;
-		}
-	}
-
-void LidarOctreeCreator::createSubTreeWithPoints(LidarOctreeCreator::Node& node,const Cube& nodeDomain,LidarPoint* points,size_t numPoints,unsigned int level)
-	{
-	/* Check if the number of points is smaller than the maximum: */
-	if(numPoints<=size_t(maxNumPointsPerNode))
-		{
-		/* Create a leaf node: */
-		node.detailSize=0.0f; // Detail size of leaf nodes is always 0.0; they can't be subdivided anyways
-		node.numPoints=(unsigned int)(numPoints);
-		node.points=points;
-		if(maxNumPointsPerInteriorNode<node.numPoints)
-			maxNumPointsPerInteriorNode=node.numPoints;
-		}
-	else
-		{
+		/* Make the node an interior node: */
+		node.children=new Node[8];
+		totalNumNodes+=8;
+		
 		/* Split the point array between the node's children: */
-		LidarPoint* childPoints[8];
-		size_t childNumPoints[8];
-		childPoints[0]=points;
-		childNumPoints[0]=numPoints;
+		node.children[0].numPoints=node.numPoints;
+		node.children[0].points=node.points;
 		
 		/* Split the point set along the three dimensions, according to the node's center: */
 		int numSplits=1;
@@ -419,28 +476,22 @@ void LidarOctreeCreator::createSubTreeWithPoints(LidarOctreeCreator::Node& node,
 			int leftIndex=0;
 			for(int j=0;j<numSplits;++j,leftIndex+=splitSize*2)
 				{
-				size_t leftNumPoints=splitPoints(childPoints[leftIndex],childNumPoints[leftIndex],i,nodeDomain.getCenter(i));
-				childPoints[leftIndex+splitSize]=childPoints[leftIndex]+leftNumPoints;
-				childNumPoints[leftIndex+splitSize]=childNumPoints[leftIndex]-leftNumPoints;
-				childNumPoints[leftIndex]=leftNumPoints;
+				size_t leftNumPoints=splitPoints(node.children[leftIndex].points,node.children[leftIndex].numPoints,i,nodeDomain.getCenter(i));
+				node.children[leftIndex+splitSize].points=node.children[leftIndex].points+leftNumPoints;
+				node.children[leftIndex+splitSize].numPoints=node.children[leftIndex].numPoints-leftNumPoints;
+				node.children[leftIndex].numPoints=leftNumPoints;
 				}
 			}
 		
 		/* Initialize the child nodes and create their subtrees: */
-		node.children=new Node[8];
-		totalNumNodes+=8;
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			Node& child=node.children[childIndex];
-			createSubTreeWithPoints(node.children[childIndex],Cube(nodeDomain,childIndex),childPoints[childIndex],childNumPoints[childIndex],level+1);
+			child.parent=&node;
+			child.level=node.level+1;
+			createSubTreeWithPoints(node.children[childIndex],Cube(nodeDomain,childIndex));
 			}
-		
-		/* Subsample the children's point sets: */
-		subsample(node,false);
 		}
-	
-	/* Save the node's points to the temporary point file: */
-	writeNodePoints(node,level);
 	}
 
 void LidarOctreeCreator::calcFileOffsets(LidarOctreeCreator::Node& node,unsigned int level,LidarFile::Offset& octreeFilePos,LidarFile::Offset& dataFilePos)
@@ -508,11 +559,12 @@ void LidarOctreeCreator::writeSubtree(const LidarOctreeCreator::Node& node,unsig
 		}
 	}
 
-LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const LidarOctreeCreator::TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate)
+LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,int numThreads,const LidarOctreeCreator::TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate)
 	:maxNumCachablePoints(sMaxNumCachablePoints),
 	 maxNumPointsPerNode(sMaxNumPointsPerNode),
 	 tempOctrees(sTempOctrees),
 	 domainBox(Box::empty),
+	 subsampleThreads(0),
 	 tempPointFileNameTemplate(sTempPointFileNameTemplate),
 	 totalNumPoints(0),totalNumReadPoints(0),
 	 totalNumNodes(1),
@@ -530,18 +582,36 @@ LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int
 	rootDomain=Cube(domainBox);
 	
 	/* Initialize the temporary point file vector: */
-	tempPointFiles.push_back(TempPointFile());
+	tempPointFiles.push_back(new TempPointFile);
+	
+	/* Start the subsampling threads: */
+	subsampleThreads=new Threads::Thread[numThreads];
+	for(int i=0;i<numThreads;++i)
+		subsampleThreads[i].start(this,&LidarOctreeCreator::subsampleThreadMethod);
 	
 	/* Create the root's subtree: */
 	std::cout<<"Creating octree for "<<totalNumPoints<<" points"<<std::endl;
 	std::cout<<"Creating octree... 0% done"<<std::flush;
-	createSubTree(root,rootDomain,0);
+	root.parent=0;
+	root.level=0;
+	createSubTree(root,rootDomain);
+	
+	/* Send the end-of-queue sentinel values to shut down the subsampling threads: */
+	for(int i=0;i<numThreads;++i)
+		subsampleQueue.push(0);
+	
+	/* Wait for the subsampling threads to shut down: */
+	for(int i=0;i<numThreads;++i)
+		subsampleThreads[i].join();
+	delete[] subsampleThreads;
+	subsampleThreads=0;
+	
+	/* Write the root's point list and flush all point files: */
+	writeNodePoints(root);
 	for(TempPointFileList::iterator tpfIt=tempPointFiles.begin();tpfIt!=tempPointFiles.end();++tpfIt)
-		if(tpfIt->file!=0)
-			tpfIt->file->flush();
+		if((*tpfIt)->file!=0)
+			(*tpfIt)->file->flush();
 	std::cout<<std::endl;
-	delete[] root.points;
-	root.points=0;
 	if(totalNumReadPoints!=totalNumPoints)
 		std::cout<<"Read "<<totalNumReadPoints<<" from temporary octree files instead of "<<totalNumPoints<<std::endl;
 	std::cout<<"Octree contains "<<totalNumNodes<<" nodes with up to "<<maxNumPointsPerInteriorNode<<" points per node in "<<maxLevel+1<<" resolution levels"<<std::endl;
@@ -559,13 +629,17 @@ LidarOctreeCreator::LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int
 
 LidarOctreeCreator::~LidarOctreeCreator(void)
 	{
+	/* Delete the subsampling threads: */
+	delete[] subsampleThreads;
+	
 	/* Delete the temporary point files: */
 	for(TempPointFileList::iterator tpfIt=tempPointFiles.begin();tpfIt!=tempPointFiles.end();++tpfIt)
 		{
-		if(tpfIt->file!=0)
+		if((*tpfIt)->file!=0)
 			{
-			delete tpfIt->file;
-			unlink(tpfIt->fileName.c_str());
+			delete (*tpfIt)->file;
+			unlink((*tpfIt)->fileName.c_str());
+			delete *tpfIt;
 			}
 		}
 	}
@@ -657,11 +731,12 @@ void LidarOctreeCreator::write(const char* lidarFileName)
 	for(int level=0;level<=maxLevel;++level)
 		{
 		/* Write the level's nodes: */
-		writeSubtree(root,level,*tempPointFiles[level].file,octreeFile,pointFile,pointBuffer);
+		writeSubtree(root,level,*tempPointFiles[level]->file,octreeFile,pointFile,pointBuffer);
 		
 		/* Delete the level's temporary point file: */
-		delete tempPointFiles[level].file;
-		unlink(tempPointFiles[level].fileName.c_str());
+		delete tempPointFiles[level]->file;
+		unlink(tempPointFiles[level]->fileName.c_str());
+		delete tempPointFiles[level];
 		}
 	delete[] pointBuffer;
 	tempPointFiles.clear();

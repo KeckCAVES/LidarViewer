@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2011 Oliver Kreylos
+Copyright (c) 2005-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -25,6 +25,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <vector>
 #include <Misc/CallbackData.h>
+#include <IO/Directory.h>
 #include <Geometry/Plane.h>
 #include <GL/gl.h>
 #include <GL/GLColor.h>
@@ -56,6 +57,7 @@ class PopupWindow;
 namespace Vrui {
 class InputDevice;
 class Lightsource;
+class AffineCoordinateTransform;
 }
 
 class LidarOctree;
@@ -159,6 +161,8 @@ class LidarViewer:public Vrui::Application,public GLObject
 	std::vector<std::string> lidarFileNames; // Array of file names from with the octrees were loaded
 	int numOctrees; // Number of LiDAR octrees rendered in parallel
 	LidarOctree** octrees; // Array of LiDAR data representations rendered in parallel
+	double offsets[3]; // Coordinate offsets that need to be added to points stored in the octree(s) to reconstruct original point positions
+	Vrui::AffineCoordinateTransform* coordTransform; // Pointer to a coordinate transformation to undo point offsets and handle vertical exaggeration
 	Scalar renderQuality; // The current rendering quality (adapted to achieve optimal frame rate)
 	Scalar fncWeight; // Weight factor for focus+context LOD adjustment
 	float pointSize; // The pixel size used to render LiDAR points
@@ -171,6 +175,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	bool useTexturePlane; // Flag whether to use automatically generated texture coordinates to visualize point distance from a plane
 	GPlane texturePlane; // Plane equation of the texture-generating plane
 	double texturePlaneScale; // Scale factor for texture plane distances
+	double planeDistanceExaggeration; // Exaggeration factor for distances orthogonal to the texture plane
 	bool updateTree; // Flag if the tree is continuously updated
 	double lastFrameTime; // Application time of last frame; used to calculate render performance
 	
@@ -197,6 +202,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::PopupWindow* interactionDialog; // The interaction settings dialog
 	GLMotif::RadioBox* interactionDialogSelectorModes;
 	SceneGraph::TransformNodePointer sceneGraphRoot; // Common root node for additional scene graphs
+	IO::DirectoryPtr dataDirectory; // Last directory from/to which selections or primitives were loaded/saved
 	
 	/* Private methods: */
 	GLMotif::Popup* createSelectorModesMenu(void);
@@ -229,11 +235,12 @@ class LidarViewer:public Vrui::Application,public GLObject
 	virtual void toolDestructionCallback(Vrui::ToolManager::ToolDestructionCallbackData* cbData);
 	virtual void frame(void);
 	virtual void display(GLContextData& contextData) const;
-	void alignSurfaceFrame(const Vrui::SurfaceNavigationTool::AlignmentData& alignmentData);
+	void alignSurfaceFrame(Vrui::SurfaceNavigationTool::AlignmentData& alignmentData);
 	void centerDisplayCallback(Misc::CallbackData* cbData);
 	void changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData);
 	void classifySelectionCallback(Misc::CallbackData* cbData);
 	void saveSelectionCallback(Misc::CallbackData* cbData);
+	void saveSelectionOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData);
 	void clearSelectionCallback(Misc::CallbackData* cbData);
 	void extractPlaneCallback(Misc::CallbackData* cbData);
 	void extractBruntonCallback(Misc::CallbackData* cbData);
@@ -244,6 +251,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void loadPrimitivesCallback(Misc::CallbackData* cbData);
 	void loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData);
 	void savePrimitivesCallback(Misc::CallbackData* cbData);
+	void savePrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData);
 	void deleteSelectedPrimitivesCallback(Misc::CallbackData* cbData);
 	void clearPrimitivesCallback(Misc::CallbackData* cbData);
 	void showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
@@ -257,6 +265,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void sunElevationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void distanceExaggerationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void renderDialogCloseCallback(Misc::CallbackData* cbData);
 	void showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);

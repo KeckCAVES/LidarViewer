@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2011 Oliver Kreylos
+Copyright (c) 2005-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -27,18 +27,19 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <stdio.h>
 #include <iostream>
 #include <stdexcept>
+#include <Misc/SelfDestructPointer.h>
 #include <Misc/FunctionCalls.h>
 #include <Misc/ThrowStdErr.h>
 #include <Misc/CreateNumberedFileName.h>
 #include <Misc/FileTests.h>
+#include <Misc/StringMarshaller.h>
 #include <Misc/StandardValueCoders.h>
 #include <Misc/ConfigurationFile.h>
 #include <IO/File.h>
 #include <IO/ValueSource.h>
 #include <Cluster/MulticastPipe.h>
 #include <Geometry/Vector.h>
-#include <Geometry/TranslationTransformation.h>
-#include <Geometry/OrthogonalTransformation.h>
+#include <Geometry/AffineTransformation.h>
 #include <Geometry/LinearUnit.h>
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
@@ -68,7 +69,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <SceneGraph/TransformNode.h>
 #include <SceneGraph/GLRenderState.h>
 #include <Vrui/GlyphRenderer.h>
-#include <Vrui/OrthogonalCoordinateTransform.h>
+#include <Vrui/AffineCoordinateTransform.h>
 #include <Vrui/Lightsource.h>
 #include <Vrui/LightsourceManager.h>
 #include <Vrui/Viewer.h>
@@ -234,7 +235,7 @@ Methods of class LidarViewer::DataItem:
 
 LidarViewer::DataItem::DataItem(GLContextData& contextData)
 	:influenceSphereDisplayListId(glGenLists(1)),
-	 pbls(Vrui::getLightsourceManager()->getLightTracker(contextData))
+	 pbls(contextData)
 	{
 	glGenTextures(1,&planeColorMapTextureId);
 	}
@@ -286,7 +287,7 @@ GLMotif::Popup* LidarViewer::createSelectionMenu(void)
 	GLMotif::Button* classifySelectionButton=new GLMotif::Button("ClassifySelectionButton",selectionMenu,"Classify Selection");
 	classifySelectionButton->getSelectCallbacks().add(this,&LidarViewer::classifySelectionCallback);
 	
-	GLMotif::Button* saveSelectionButton=new GLMotif::Button("SaveSelectionButton",selectionMenu,"Save Selection");
+	GLMotif::Button* saveSelectionButton=new GLMotif::Button("SaveSelectionButton",selectionMenu,"Save Selection...");
 	saveSelectionButton->getSelectCallbacks().add(this,&LidarViewer::saveSelectionCallback);
 	
 	new GLMotif::Separator("Separator1",selectionMenu,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
@@ -323,10 +324,10 @@ GLMotif::Popup* LidarViewer::createExtractionMenu(void)
 	GLMotif::Button* intersectPrimitivesButton=new GLMotif::Button("IntersectPrimitivesButton",extractionMenu,"Intersect Primitives");
 	intersectPrimitivesButton->getSelectCallbacks().add(this,&LidarViewer::intersectPrimitivesCallback);
 	
-	GLMotif::Button* loadPrimitivesButton=new GLMotif::Button("LoadPrimitivesButton",extractionMenu,"Load Primitives");
+	GLMotif::Button* loadPrimitivesButton=new GLMotif::Button("LoadPrimitivesButton",extractionMenu,"Load Primitives...");
 	loadPrimitivesButton->getSelectCallbacks().add(this,&LidarViewer::loadPrimitivesCallback);
 	
-	GLMotif::Button* savePrimitivesButton=new GLMotif::Button("SavePrimitivesButton",extractionMenu,"Save Primitives");
+	GLMotif::Button* savePrimitivesButton=new GLMotif::Button("SavePrimitivesButton",extractionMenu,"Save Primitives...");
 	savePrimitivesButton->getSelectCallbacks().add(this,&LidarViewer::savePrimitivesCallback);
 	
 	new GLMotif::Separator("Separator1",extractionMenu,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
@@ -421,6 +422,7 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	renderQualitySlider->getTextField()->setFieldWidth(5);
 	renderQualitySlider->getTextField()->setPrecision(2);
 	renderQualitySlider->setValueRange(-3.0,3.0,0.01);
+	renderQualitySlider->getSlider()->addNotch(0.0f);
 	renderQualitySlider->setValue(double(renderQuality));
 	renderQualitySlider->getValueChangedCallbacks().add(this,&LidarViewer::renderQualitySliderCallback);
 	
@@ -447,6 +449,27 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	pointSizeSlider->getValueChangedCallbacks().add(this,&LidarViewer::pointSizeSliderCallback);
 	
 	renderQualityBox->manageChild();
+	
+	/* Create a slider to change plane distance exaggeration: */
+	new GLMotif::Separator("Separator1",renderSettings,GLMotif::Separator::HORIZONTAL,0.0f,GLMotif::Separator::LOWERED);
+	
+	GLMotif::RowColumn* exaggerationBox=new GLMotif::RowColumn("ExaggerationBox",renderSettings,false);
+	exaggerationBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+	exaggerationBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	exaggerationBox->setNumMinorWidgets(2);
+	
+	new GLMotif::Label("ExaggerationLabel",exaggerationBox,"Exaggeration");
+	
+	GLMotif::TextFieldSlider* exaggerationSlider=new GLMotif::TextFieldSlider("ExaggerationSlider",exaggerationBox,8,ss.fontHeight*10.0f);
+	exaggerationSlider->getTextField()->setFieldWidth(8);
+	exaggerationSlider->getTextField()->setPrecision(3);
+	exaggerationSlider->setSliderMapping(GLMotif::TextFieldSlider::EXP10);
+	exaggerationSlider->setValueRange(0.05,20.0,0.02);
+	exaggerationSlider->getSlider()->addNotch(0.0f);
+	exaggerationSlider->setValue(double(planeDistanceExaggeration));
+	exaggerationSlider->getValueChangedCallbacks().add(this,&LidarViewer::distanceExaggerationSliderCallback);
+	
+	exaggerationBox->manageChild();
 	
 	/* Check if any of the octrees have normal vectors: */
 	bool haveNormalVectors=false;
@@ -767,11 +790,13 @@ void LidarViewer::setEnableSun(bool newEnableSun)
 LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	:Vrui::Application(argc,argv,appDefaults),
 	 numOctrees(0),octrees(0),
+	 coordTransform(0),
 	 renderQuality(0),fncWeight(0.5),
 	 pointSize(3.0f),
 	 pointBasedLighting(false),usePointColors(true),
 	 enableSun(false),viewerHeadlightStates(0),sunAzimuth(180),sunElevation(45),sun(0),
 	 useTexturePlane(false),texturePlane(GPlane::Vector(0.0,0.0,1.0),0.0),texturePlaneScale(100.0),
+	 planeDistanceExaggeration(1.0),
 	 updateTree(true),
 	 lastFrameTime(Vrui::getApplicationTime()),
 	 overrideTools(true),
@@ -784,7 +809,8 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 selectedPrimitiveColor(0.1f,0.5f,0.5f,0.5f),
 	 lastPickedPrimitive(-1),
 	 mainMenu(0),renderDialog(0),interactionDialog(0),
-	 sceneGraphRoot(0)
+	 sceneGraphRoot(0),
+	 dataDirectory(0)
 	{
 	memCacheSize=512;
 	unsigned int gfxCacheSize=128;
@@ -937,7 +963,8 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	
 	/* Register a coordinate transform object to undo the coordinate offset done by the octree object and LiDAR preprocessor: */
 	/* WARNING: This does not work properly for multiple octree files! */
-	Vrui::Vector offset=octrees[0]->getPointOffset();
+	for(int i=0;i<3;++i)
+		offsets[i]=double(octrees[0]->getPointOffset()[i]);
 	std::string offsetFileName=lidarFileNames[0];
 	offsetFileName.append("/Offset");
 	if(Misc::isFileReadable(offsetFileName.c_str()))
@@ -946,14 +973,16 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		IO::FilePtr offsetFile(Vrui::openFile(offsetFileName.c_str()));
 		offsetFile->setEndianness(Misc::LittleEndian);
 		for(int i=0;i<3;++i)
-			offset[i]-=offsetFile->read<double>();
+			offsets[i]-=offsetFile->read<double>();
 		}
-	Vrui::getCoordinateManager()->setCoordinateTransform(new Vrui::OrthogonalCoordinateTransform(Vrui::OGTransform::translate(-offset)));
+	Vrui::Vector offVec(offsets);
+	coordTransform=new Vrui::AffineCoordinateTransform(Vrui::ATransform::translate(-offVec));
+	Vrui::getCoordinateManager()->setCoordinateTransform(coordTransform);
 	
 	/* Apply the transformation to any additional scene graphs: */
 	if(sceneGraphRoot!=0)
 		{
-		sceneGraphRoot->translation.setValue(-offset);
+		sceneGraphRoot->translation.setValue(-offVec);
 		sceneGraphRoot->update();
 		}
 	
@@ -978,9 +1007,6 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	Vrui::getToolManager()->addClass(lidarToolFactory,LidarToolFactory::factoryDestructor);
 	ProfileToolFactory* profileToolFactory=new ProfileToolFactory(*Vrui::getToolManager());
 	Vrui::getToolManager()->addClass(profileToolFactory,ProfileToolFactory::factoryDestructor);
-	
-	/* This object depends on Vrui's lightsource manager: */
-	dependsOn(Vrui::getLightsourceManager());
 	
 	/* Initialize the scene graph: */
 	createSceneGraph();
@@ -1154,7 +1180,9 @@ void LidarViewer::display(GLContextData& contextData) const
 	glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_LINE_BIT|GL_POINT_BIT|GL_TEXTURE_BIT);
 	if(pointBasedLighting&&octrees[0]->hasNormalVectors())
 		{
-		if(usePointColors)
+		if(useTexturePlane)
+			glMaterial(GLMaterialEnums::FRONT_AND_BACK,GLMaterial(GLMaterial::Color(1.0f,1.0f,1.0f),GLMaterial::Color(0.6f,0.6f,0.6f),30.0f));
+		else if(usePointColors)
 			{
 			glMaterial(GLMaterialEnums::FRONT_AND_BACK,GLMaterial(GLMaterial::Color(1.0f,1.0f,1.0f),GLMaterial::Color(0.6f,0.6f,0.6f),30.0f));
 			glEnable(GL_COLOR_MATERIAL);
@@ -1164,30 +1192,58 @@ void LidarViewer::display(GLContextData& contextData) const
 			glMaterial(GLMaterialEnums::FRONT_AND_BACK,GLMaterial(GLMaterial::Color(0.6f,0.6f,0.6f),GLMaterial::Color(0.4f,0.4f,0.4f),30.0f));
 		
 		/* Enable the point-based lighting shader: */
+		dataItem->pbls.setUsePlaneDistance(useTexturePlane);
 		dataItem->pbls.setUsePointColors(usePointColors);
 		dataItem->pbls.enable();
+		
+		if(useTexturePlane)
+			{
+			/* Set up distance plane texturing: */
+			dataItem->pbls.setDistancePlane(0,texturePlane,texturePlaneScale);
+			
+			/* Bind the distance map texture: */
+			glBindTexture(GL_TEXTURE_1D,dataItem->planeColorMapTextureId);
+			}
 		}
 	else
+		{
+		/* Turn off lighting: */
 		glDisable(GL_LIGHTING);
+		
+		if(useTexturePlane)
+			{
+			/* Set up automatic texture coordinate generation: */
+			glTexGeni(GL_S,GL_TEXTURE_GEN_MODE,GL_OBJECT_LINEAR);
+			GLdouble planeCoeff[4];
+			for(int i=0;i<3;++i)
+				planeCoeff[i]=texturePlane.getNormal()[i]/texturePlaneScale;
+			planeCoeff[3]=0.5-texturePlane.getOffset()/texturePlaneScale;
+			glTexGendv(GL_S,GL_OBJECT_PLANE,planeCoeff);
+			glEnable(GL_TEXTURE_GEN_S);
+			
+			/* Enable 1D texture mapping: */
+			glEnable(GL_TEXTURE_1D);
+			glDisable(GL_TEXTURE_2D);
+			glDisable(GL_TEXTURE_3D);
+			glBindTexture(GL_TEXTURE_1D,dataItem->planeColorMapTextureId);
+			glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_REPLACE);
+			}
+		}
+	
 	glPointSize(pointSize);
 	
-	if(useTexturePlane)
+	if(planeDistanceExaggeration!=1.0)
 		{
-		/* Set up automatic texture coordinate generation: */
-		glTexGeni(GL_S,GL_TEXTURE_GEN_MODE,GL_OBJECT_LINEAR);
-		GLdouble planeCoeff[4];
-		for(int i=0;i<3;++i)
-			planeCoeff[i]=texturePlane.getNormal()[i]/texturePlaneScale;
-		planeCoeff[3]=0.5-texturePlane.getOffset()/texturePlaneScale;
-		glTexGendv(GL_S,GL_OBJECT_PLANE,planeCoeff);
-		glEnable(GL_TEXTURE_GEN_S);
-		
-		/* Enable 1D texture mapping: */
-		glEnable(GL_TEXTURE_1D);
-		glDisable(GL_TEXTURE_2D);
-		glDisable(GL_TEXTURE_3D);
-		glBindTexture(GL_TEXTURE_1D,dataItem->planeColorMapTextureId);
-		glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_REPLACE);
+		/* Enable plane distance exaggeration: */
+		glMatrixMode(GL_MODELVIEW);
+		glPushMatrix();
+		GPlane::Vector fTrans=texturePlane.getNormal()*(texturePlane.getOffset()/Geometry::sqr(texturePlane.getNormal()));
+		Geometry::Rotation<GPlane::Scalar,3> fRot=Geometry::Rotation<GPlane::Scalar,3>::rotateFromTo(GPlane::Vector(0,0,1),texturePlane.getNormal());
+		glTranslate(fTrans);
+		glRotate(fRot);
+		glScaled(1.0,1.0,planeDistanceExaggeration);
+		glRotate(Geometry::invert(fRot));
+		glTranslate(-fTrans);
 		}
 	
 	/* Render the LiDAR point tree: */
@@ -1200,21 +1256,29 @@ void LidarViewer::display(GLContextData& contextData) const
 	for(int i=0;i<numOctrees;++i)
 		octrees[i]->glRenderAction(frustum,contextData);
 	
-	if(useTexturePlane)
-		{
-		/* Disable 1D texture mapping: */
-		glBindTexture(GL_TEXTURE_1D,0);
-		glDisable(GL_TEXTURE_1D);
-		
-		/* Disable automatic texture coordinate generation: */
-		glDisable(GL_TEXTURE_GEN_S);
-		}
+	if(planeDistanceExaggeration!=1.0)
+		glPopMatrix();
 	
 	/* Reset OpenGL state: */
 	if(pointBasedLighting&&octrees[0]->hasNormalVectors())
 		{
 		/* Disable the point-based lighting shader: */
 		dataItem->pbls.disable();
+		
+		if(useTexturePlane)
+			glBindTexture(GL_TEXTURE_1D,0);
+		}
+	else
+		{
+		if(useTexturePlane)
+			{
+			/* Disable 1D texture mapping: */
+			glBindTexture(GL_TEXTURE_1D,0);
+			glDisable(GL_TEXTURE_1D);
+			
+			/* Disable automatic texture coordinate generation: */
+			glDisable(GL_TEXTURE_GEN_S);
+			}
 		}
 	glPopAttrib();
 	
@@ -1241,7 +1305,7 @@ void LidarViewer::display(GLContextData& contextData) const
 		(*pIt)->glRenderAction(contextData);
 	}
 
-void LidarViewer::alignSurfaceFrame(const Vrui::SurfaceNavigationTool::AlignmentData& alignmentData)
+void LidarViewer::alignSurfaceFrame(Vrui::SurfaceNavigationTool::AlignmentData& alignmentData)
 	{
 	/* Get the frame's base point: */
 	Vrui::Point base=alignmentData.surfaceFrame.getOrigin();
@@ -1334,14 +1398,106 @@ void LidarViewer::classifySelectionCallback(Misc::CallbackData* cbData)
 
 void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
 	{
+	/* Create the default file name and file name filter: */
+	const char* fileName;
+	const char* filter;
+	if(octrees[0]->hasNormalVectors())
+		{
+		fileName="SelectedPoints.xyzuvwrgb";
+		filter=".xyzuvwrgb";
+		}
+	else
+		{
+		fileName="SelectedPoints.xyzrgb";
+		filter=".xyzrgb";
+		}
+	
+	try
+		{
+		/* Open the data directory if it doesn't already exist: */
+		if(dataDirectory==0)
+			dataDirectory=Vrui::openDirectory(".");
+		
+		/* Create a uniquely-named selection file in the data directory: */
+		std::string selectionFileName=dataDirectory->createNumberedFileName(fileName,4);
+		
+		/* Create a file selection dialog to select an selection file name: */
+		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> saveSelectionDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Save Selection...",dataDirectory,selectionFileName.c_str(),filter));
+		saveSelectionDialog->getOKCallbacks().add(this,&LidarViewer::saveSelectionOKCallback);
+		saveSelectionDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		
+		/* Show the file selection dialog: */
+		Vrui::popupPrimaryWidget(saveSelectionDialog.releaseTarget());
+		}
+	catch(std::runtime_error err)
+		{
+		/* Show an error message: */
+		Vrui::showErrorMessage("Save Selection...",Misc::printStdErrMsg("Could not save selection due to exception %s",err.what()));
+		}
+	}
+
+void LidarViewer::saveSelectionOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData)
+	{
+	bool success=false;
+	
 	if(Vrui::isMaster())
 		{
-		/* Create a selection saver functor: */
-		LidarSelectionSaver lss("SelectedPoints.xyzuvwrgb",octrees[0]->getPointOffset());
-		
-		/* Save all selected points: */
-		octrees[0]->processSelectedPointsWithNormals(lss);
+		try
+			{
+			/* Create a selection saver functor: */
+			LidarSelectionSaver lss(cbData->getSelectedPath().c_str(),offsets);
+			if(octrees[0]->hasNormalVectors())
+				{
+				/* Save all selected points: */
+				octrees[0]->processSelectedPointsWithNormals(lss);
+				}
+			else
+				{
+				/* Save all selected points: */
+				octrees[0]->processSelectedPoints(lss);
+				}
+			
+			if(Vrui::getMainPipe()!=0)
+				{
+				/* Send success flag to the slaves: */
+				Vrui::getMainPipe()->write<unsigned char>(0);
+				}
+			
+			success=true;
+			}
+		catch(std::runtime_error err)
+			{
+			if(Vrui::getMainPipe()!=0)
+				{
+				/* Send error flag and error message to the slaves: */
+				Vrui::getMainPipe()->write<unsigned char>(1);
+				Misc::writeCString(err.what(),*Vrui::getMainPipe());
+				}
+			
+			/* Show an error message: */
+			Vrui::showErrorMessage("Save Selection...",Misc::printStdErrMsg("Could not write selection to file %s due to exception %s",cbData->getSelectedPath().c_str(),err.what()));
+			}
 		}
+	else
+		{
+		/* Read success code from the master: */
+		if(!(success=Vrui::getMainPipe()->read<unsigned char>()==0))
+			{
+			/* Read the error message and show an error dialog: */
+			char* what=Misc::readCString(*Vrui::getMainPipe());
+			Vrui::showErrorMessage("Save Selection...",Misc::printStdErrMsg("Could not write selection to file %s due to exception %s",cbData->getSelectedPath().c_str(),what));
+			delete[] what;
+			}
+		}
+	
+	if(success)
+		{
+		/* Remember the current directory for next time: */
+		dataDirectory=cbData->selectedDirectory;
+		}
+	
+	/* Destroy the file selection dialog: */
+	cbData->fileSelectionDialog->close();
 	}
 
 void LidarViewer::clearSelectionCallback(Misc::CallbackData* cbData)
@@ -1357,7 +1513,7 @@ void LidarViewer::extractPlaneCallback(Misc::CallbackData* cbData)
 		{
 		PlanePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new PlanePrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+			primitive=new PlanePrimitive(octrees[0],Primitive::Vector(offsets),extractorPipe);
 		else
 			primitive=new PlanePrimitive(extractorPipe);
 		
@@ -1381,7 +1537,7 @@ void LidarViewer::extractBruntonCallback(Misc::CallbackData* cbData)
 		{
 		BruntonPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new BruntonPrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+			primitive=new BruntonPrimitive(octrees[0],Primitive::Vector(offsets),extractorPipe);
 		else
 			primitive=new BruntonPrimitive(extractorPipe);
 		
@@ -1405,7 +1561,7 @@ void LidarViewer::extractLineCallback(Misc::CallbackData* cbData)
 		{
 		LinePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new LinePrimitive(octrees[0],extractorPipe);
+			primitive=new LinePrimitive(octrees[0],Primitive::Vector(offsets),extractorPipe);
 		else
 			primitive=new LinePrimitive(extractorPipe);
 		
@@ -1425,7 +1581,7 @@ void LidarViewer::extractSphereCallback(Misc::CallbackData* cbData)
 		{
 		SpherePrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new SpherePrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+			primitive=new SpherePrimitive(octrees[0],Primitive::Vector(offsets),extractorPipe);
 		else
 			primitive=new SpherePrimitive(extractorPipe);
 		
@@ -1445,7 +1601,7 @@ void LidarViewer::extractCylinderCallback(Misc::CallbackData* cbData)
 		{
 		CylinderPrimitive* primitive;
 		if(Vrui::isMaster())
-			primitive=new CylinderPrimitive(octrees[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+			primitive=new CylinderPrimitive(octrees[0],Primitive::Vector(offsets),extractorPipe);
 		else
 			primitive=new CylinderPrimitive(extractorPipe);
 		
@@ -1484,7 +1640,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a line by intersecting two planes: */
 			if(Vrui::isMaster())
-				primitive=new LinePrimitive(planes[0],planes[1],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+				primitive=new LinePrimitive(planes[0],planes[1],Primitive::Vector(offsets),extractorPipe);
 			else
 				primitive=new LinePrimitive(extractorPipe);
 			}
@@ -1492,7 +1648,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a point by intersecting three planes: */
 			if(Vrui::isMaster())
-				primitive=new PointPrimitive(planes[0],planes[1],planes[2],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+				primitive=new PointPrimitive(planes[0],planes[1],planes[2],Primitive::Vector(offsets),extractorPipe);
 			else
 				primitive=new PointPrimitive(extractorPipe);
 			}
@@ -1500,7 +1656,7 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 			{
 			/* Create a point by intersecting a plane and a line: */
 			if(Vrui::isMaster())
-				primitive=new PointPrimitive(planes[0],lines[0],Primitive::Vector(-octrees[0]->getPointOffset()),extractorPipe);
+				primitive=new PointPrimitive(planes[0],lines[0],Primitive::Vector(offsets),extractorPipe);
 			else
 				primitive=new PointPrimitive(extractorPipe);
 			}
@@ -1523,13 +1679,25 @@ void LidarViewer::intersectPrimitivesCallback(Misc::CallbackData* cbData)
 
 void LidarViewer::loadPrimitivesCallback(Misc::CallbackData* cbData)
 	{
-	/* Create a file selection dialog to select a primitive file: */
-	GLMotif::FileSelectionDialog* loadPrimitivesDialog=new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",Vrui::openDirectory("."),".dat");
-	loadPrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::loadPrimitivesOKCallback);
-	loadPrimitivesDialog->getCancelCallbacks().add(loadPrimitivesDialog,&GLMotif::FileSelectionDialog::defaultCloseCallback);
-	
-	/* Show the file selection dialog: */
-	Vrui::popupPrimaryWidget(loadPrimitivesDialog);
+	try
+		{
+		/* Open the data directory if it doesn't already exist: */
+		if(dataDirectory==0)
+			dataDirectory=Vrui::openDirectory(".");
+		
+		/* Create a file selection dialog to select a primitive file: */
+		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> loadPrimitivesDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",dataDirectory,".dat"));
+		loadPrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::loadPrimitivesOKCallback);
+		loadPrimitivesDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		
+		/* Show the file selection dialog: */
+		Vrui::popupPrimaryWidget(loadPrimitivesDialog.releaseTarget());
+		}
+	catch(std::runtime_error err)
+		{
+		/* Show an error message: */
+		Vrui::showErrorMessage("Load Primitives...",Misc::printStdErrMsg("Could not load primitives due to exception %s",err.what()));
+		}
 	}
  
 void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData)
@@ -1544,7 +1712,7 @@ void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallb
 		char header[40];
 		primitiveFile->read<char>(header,sizeof(header));
 		if(strcmp(header,"LidarViewer primitive file v1.2       \n")!=0)
-			Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: File %s is not a valid version 1.2 primitive file","Primitives.dat");
+			Misc::throwStdErr("File is not a valid version 1.2 primitive file");
 		
 		/* Read all primitives in the file: */
 		while(!primitiveFile->eof())
@@ -1557,36 +1725,40 @@ void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallb
 			switch(primitiveType)
 				{
 				case 0:
-					newPrimitive=new PlanePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					newPrimitive=new PlanePrimitive(*primitiveFile,-Primitive::Vector(offsets));
 					break;
 				
 				case 1:
-					newPrimitive=new SpherePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					newPrimitive=new SpherePrimitive(*primitiveFile,-Primitive::Vector(offsets));
 					break;
 				
 				case 2:
-					newPrimitive=new CylinderPrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					newPrimitive=new CylinderPrimitive(*primitiveFile,-Primitive::Vector(offsets));
 					break;
 				
 				case 3:
-					newPrimitive=new LinePrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					newPrimitive=new LinePrimitive(*primitiveFile,-Primitive::Vector(offsets));
 					break;
 				
 				case 4:
-					newPrimitive=new PointPrimitive(*primitiveFile,Primitive::Vector(-octrees[0]->getPointOffset()));
+					newPrimitive=new PointPrimitive(*primitiveFile,-Primitive::Vector(offsets));
 					break;
 				
 				default:
-					Misc::throwStdErr("LidarViewer::loadPrimitivesCallback: Unknown primitive type %d",primitiveType);
+					Misc::throwStdErr("Unknown primitive type %d",primitiveType);
 				}
 			
 			/* Store the primitive: */
 			lastPickedPrimitive=addPrimitive(newPrimitive);
 			}
+		
+		/* Remember the current directory for next time: */
+		dataDirectory=cbData->selectedDirectory;
 		}
 	catch(std::runtime_error err)
 		{
-		Vrui::showErrorMessage("Load Primitives",err.what());
+		/* Show an error message: */
+		Vrui::showErrorMessage("Load Primitives...",Misc::printStdErrMsg("Could not load primitives from file %s due to exception %s",cbData->getSelectedPath().c_str(),err.what()));
 		}
 	
 	/* Close the file selection dialog: */
@@ -1597,8 +1769,34 @@ void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
 	{
 	try
 		{
+		/* Open the data directory if it doesn't already exist: */
+		if(dataDirectory==0)
+			dataDirectory=Vrui::openDirectory(".");
+
+		/* Create a uniquely-named primitive file name in the data directory: */
+		std::string primitiveFileName=dataDirectory->createNumberedFileName("SavedPrimitives.dat",4);
+
+		/* Create a file selection dialog to select a primitive file: */
+		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> savePrimitivesDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Save Primitives...",dataDirectory,primitiveFileName.c_str(),".dat"));
+		savePrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::savePrimitivesOKCallback);
+		savePrimitivesDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		
+		/* Show the file selection dialog: */
+		Vrui::popupPrimaryWidget(savePrimitivesDialog.releaseTarget());
+		}
+	catch(std::runtime_error err)
+		{
+		/* Show an error message: */
+		Vrui::showErrorMessage("Save Primitives...",Misc::printStdErrMsg("Could not save primitives due to exception %s",err.what()));
+		}
+	}
+
+void LidarViewer::savePrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData)
+	{
+	try
+		{
 		/* Open the primitive file: */
-		IO::FilePtr primitiveFile(Vrui::openFile(Misc::createNumberedFileName("SavedPrimitives.dat",4).c_str(),IO::File::WriteOnly));
+		IO::FilePtr primitiveFile(cbData->selectedDirectory->openFile(cbData->selectedFileName,IO::File::WriteOnly));
 		primitiveFile->setEndianness(Misc::LittleEndian);
 		
 		/* Write the file header: */
@@ -1622,13 +1820,17 @@ void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
 				primitiveFile->write<int>(4);
 			
 			/* Write the primitive: */
-			(*pIt)->write(*primitiveFile,Primitive::Vector(octrees[0]->getPointOffset()));
+			(*pIt)->write(*primitiveFile,Primitive::Vector(offsets));
 			}
 		}
 	catch(std::runtime_error err)
 		{
-		Vrui::showErrorMessage("Save Primitives",err.what());
+		/* Show an error message: */
+		Vrui::showErrorMessage("Save Primitives...",Misc::printStdErrMsg("Could not write primitives to file %s due to exception %s",cbData->getSelectedPath().c_str(),err.what()));
 		}
+	
+	/* Close the file selection dialog: */
+	cbData->fileSelectionDialog->close();
 	}
 
 void LidarViewer::deleteSelectedPrimitivesCallback(Misc::CallbackData* cbData)
@@ -1728,6 +1930,23 @@ void LidarViewer::texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::Valu
 	{
 	/* Get the new texture plane scaling factor: */
 	texturePlaneScale=cbData->value;
+	}
+
+void LidarViewer::distanceExaggerationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
+	{
+	/* Get new plane distance exaggeration factor: */
+	planeDistanceExaggeration=cbData->value;
+	
+	/* Update the affine coordinate transformer to reflect the new exaggeration value: */
+	Vrui::Vector tn=Vrui::Vector(texturePlane.getNormal());
+	Vrui::Vector fTrans=tn*(Vrui::Scalar(texturePlane.getOffset())/tn.sqr());
+	Vrui::Rotation fRot=Vrui::Rotation::rotateFromTo(Vrui::Vector(0,0,1),tn);
+	Vrui::ATransform newTransform=Vrui::ATransform::translate(fTrans);
+	newTransform*=Vrui::ATransform::rotate(fRot);
+	newTransform*=Vrui::ATransform::scale(Vrui::ATransform::Scale(1.0,1.0,planeDistanceExaggeration));
+	newTransform*=Vrui::ATransform::rotate(Geometry::invert(fRot));
+	newTransform*=Vrui::ATransform::translate(-(fTrans+Vrui::Vector(offsets)));
+	coordTransform->setTransform(newTransform);
 	}
 
 void LidarViewer::renderDialogCloseCallback(Misc::CallbackData* cbData)

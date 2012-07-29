@@ -1,7 +1,7 @@
 /***********************************************************************
 PointBasedLightingShader - Class to maintain a GLSL point-based lighting
 shader that tracks the current OpenGL lighting state.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -23,12 +23,14 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "PointBasedLightingShader.h"
 
-#include <string.h>
-#include <stdio.h>
+#include <string>
 #include <iostream>
+#include <Misc/PrintInteger.h>
 #include <Misc/ThrowStdErr.h>
 #include <GL/gl.h>
-#include <GL/GLExtensionManager.h>
+#include <GL/GLLightTracker.h>
+#include <GL/GLClipPlaneTracker.h>
+#include <GL/GLContextData.h>
 #include <GL/Extensions/GLARBShaderObjects.h>
 #include <GL/Extensions/GLARBVertexShader.h>
 #include <GL/Extensions/GLARBFragmentShader.h>
@@ -39,12 +41,23 @@ Methods of class PointBasedLightingShader:
 
 void PointBasedLightingShader::compileShader(void)
 	{
+	const GLLightTracker& lt=*(contextData.getLightTracker());
+	const GLClipPlaneTracker& cpt=*(contextData.getClipPlaneTracker());
+	
 	std::string vertexShaderFunctions;
 	std::string vertexShaderMain;
 	
+	if(usePlaneDistance)
+		{
+		/* Create the plane distance mapping uniforms: */
+		vertexShaderMain+="\
+			uniform vec4 planeDistancePlane;\n\
+			uniform sampler1D planeDistanceMap;\n\
+			\n";
+		}
+	
 	/* Create the main vertex shader starting boilerplate: */
-	vertexShaderMain+=
-		"\
+	vertexShaderMain+="\
 		void main()\n\
 			{\n\
 			/* Compute the vertex position in eye coordinates: */\n\
@@ -54,37 +67,39 @@ void PointBasedLightingShader::compileShader(void)
 			vec3 normalEc=normalize(gl_NormalMatrix*gl_Normal);\n\
 			\n\
 			/* Let the normal vector always point towards the eye: */\n\
-			if(dot(normalEc,vertexEc.xyz)>0.0)\n\
-				normalEc=-normalEc;\n\
+			normalEc=faceforward(normalEc,normalEc,vertexEc.xyz);\n\
 			\n";
 	
 	/* Get the material components: */
-	if(usePointColors)
+	if(usePlaneDistance)
 		{
-		vertexShaderMain+=
-			"\
+		vertexShaderMain+="\
+			/* Get the material properties from the plane distance texture: */\n\
+			float planeDist=dot(planeDistancePlane,gl_Vertex);\n\
+			vec4 ambient=texture1D(planeDistanceMap,planeDist);\n\
+			vec4 diffuse=ambient;\n";
+		}
+	else if(usePointColors)
+		{
+		vertexShaderMain+="\
 			/* Get the material properties from the current color: */\n\
 			vec4 ambient=gl_Color;\n\
-			vec4 diffuse=gl_Color;\n\
-			vec4 specular=gl_FrontMaterial.specular;\n\
-			float shininess=gl_FrontMaterial.shininess;\n\
-			\n";
+			vec4 diffuse=gl_Color;\n";
 		}
 	else
 		{
-		vertexShaderMain+=
-			"\
+		vertexShaderMain+="\
 			/* Get the material properties from the material state: */\n\
 			vec4 ambient=gl_FrontMaterial.ambient;\n\
-			vec4 diffuse=gl_FrontMaterial.diffuse;\n\
+			vec4 diffuse=gl_FrontMaterial.diffuse;\n";
+		}
+	vertexShaderMain+="\
 			vec4 specular=gl_FrontMaterial.specular;\n\
 			float shininess=gl_FrontMaterial.shininess;\n\
 			\n";
-		}
 	
 	/* Continue the main vertex shader: */
-	vertexShaderMain+=
-			"\
+	vertexShaderMain+="\
 			/* Calculate global ambient light term: */\n\
 			vec4 ambientDiffuseAccum=gl_LightModel.ambient*ambient;\n\
 			vec4 specularAccum=vec4(0.0,0.0,0.0,0.0);\n\
@@ -92,25 +107,32 @@ void PointBasedLightingShader::compileShader(void)
 			/* Accumulate all enabled light sources: */\n";
 	
 	/* Create light application functions for all enabled light sources: */
-	for(int lightIndex=0;lightIndex<lightTracker.getMaxNumLights();++lightIndex)
-		if(lightTracker.getLightState(lightIndex).isEnabled())
+	for(int lightIndex=0;lightIndex<lt.getMaxNumLights();++lightIndex)
+		if(lt.getLightState(lightIndex).isEnabled())
 			{
 			/* Create the light accumulation function: */
-			vertexShaderFunctions+=lightTracker.createAccumulateLightFunction(lightIndex);
+			vertexShaderFunctions+=lt.createAccumulateLightFunction(lightIndex);
 			
 			/* Call the light application function from the shader's main function: */
-			char call[256];
-			snprintf(call,sizeof(call),"\t\t\taccumulateLight%d(vertexEc,normalEc,ambient,diffuse,specular,shininess,ambientDiffuseAccum,specularAccum);\n",lightIndex);
-			vertexShaderMain+=call;
+			vertexShaderMain+="\
+				accumulateLight";
+			char liBuffer[12];
+			vertexShaderMain.append(Misc::print(lightIndex,liBuffer+11));
+			vertexShaderMain+="(vertexEc,normalEc,ambient,diffuse,specular,shininess,ambientDiffuseAccum,specularAccum);\n";
 			}
 	
-	/* Finish the main function: */
-	vertexShaderMain+=
-		"\
+	/* Continue the main vertex shader: */
+	vertexShaderMain+="\
 			\n\
 			/* Compute final vertex color: */\n\
 			gl_FrontColor=ambientDiffuseAccum+specularAccum;\n\
-			\n\
+			\n";
+	
+	/* Insert code to calculate the vertex' position relative to all user-specified clipping planes: */
+	vertexShaderMain+=cpt.createCalcClipDistances("vertexEc");
+	
+	/* Finish the main vertex shader: */
+	vertexShaderMain+="\
 			/* Use standard vertex position: */\n\
 			gl_Position=ftransform();\n\
 			}\n";
@@ -144,13 +166,25 @@ void PointBasedLightingShader::compileShader(void)
 		/* Signal an error: */
 		Misc::throwStdErr("Error \"%s\" while linking shader program",linkLogBuffer);
 		}
+	
+	if(usePlaneDistance)
+		{
+		/* Get the locations of the uniform variables: */
+		planeDistancePlaneLocation=glGetUniformLocationARB(programObject,"planeDistancePlane");
+		planeDistanceMapLocation=glGetUniformLocationARB(programObject,"planeDistanceMap");
+		}
+	else
+		{
+		}
 	}
 
-PointBasedLightingShader::PointBasedLightingShader(const GLLightTracker& sLightTracker)
-	:lightTracker(sLightTracker),lightStateVersion(0),
+PointBasedLightingShader::PointBasedLightingShader(GLContextData& sContextData)
+	:contextData(sContextData),
+	 lightStateVersion(0),clipPlaneStateVersion(0),shaderSettingsVersion(0),
+	 settingsVersion(1),
+	 usePlaneDistance(false),
 	 usePointColors(false),
-	 vertexShader(0),fragmentShader(0),
-	 programObject(0)
+	 vertexShader(0),fragmentShader(0),programObject(0)
 	{
 	/* Check for the required OpenGL extensions: */
 	if(!GLARBShaderObjects::isSupported())
@@ -182,25 +216,42 @@ PointBasedLightingShader::~PointBasedLightingShader(void)
 	glDeleteObjectARB(fragmentShader);
 	}
 
+void PointBasedLightingShader::setUsePlaneDistance(bool newUsePlaneDistance)
+	{
+	if(usePlaneDistance!=newUsePlaneDistance)
+		{
+		/* Update the state: */
+		usePlaneDistance=newUsePlaneDistance;
+		++settingsVersion;
+		}
+	}
+
 void PointBasedLightingShader::setUsePointColors(bool newUsePointColors)
 	{
 	if(usePointColors!=newUsePointColors)
 		{
-		/* Invalidate the shader program: */
-		lightStateVersion=0;
+		usePointColors=newUsePointColors;
+		++settingsVersion;
 		}
-	usePointColors=newUsePointColors;
 	}
 
 void PointBasedLightingShader::enable(void)
 	{
 	try
 		{
-		/* Re-compile the shader if it is out of line with the light tracker's lighting state: */
-		if(lightStateVersion!=lightTracker.getVersion())
+		/* Re-compile the shader if it is out of line with current state: */
+		const GLLightTracker& lt=*(contextData.getLightTracker());
+		const GLClipPlaneTracker& cpt=*(contextData.getClipPlaneTracker());
+		
+		if(lightStateVersion!=lt.getVersion()||clipPlaneStateVersion!=cpt.getVersion()||shaderSettingsVersion!=settingsVersion)
 			{
-			lightStateVersion=lightTracker.getVersion();
+			/* Rebuild the shader: */
 			compileShader();
+			
+			/* Mark the shader as up-to-date: */
+			lightStateVersion=lt.getVersion();
+			clipPlaneStateVersion=cpt.getVersion();
+			shaderSettingsVersion=settingsVersion;
 			}
 		
 		/* Enable the shader: */
@@ -210,6 +261,19 @@ void PointBasedLightingShader::enable(void)
 		{
 		std::cerr<<"Disabling lighting shader due to exception "<<err.what()<<std::endl;
 		}
+	}
+
+void PointBasedLightingShader::setDistancePlane(int textureUnit,const PointBasedLightingShader::Plane& distancePlane,double distancePlaneScale) const
+	{
+	/* Set the plane equation variable: */
+	GLfloat planeEq[4];
+	for(int i=0;i<3;++i)
+		planeEq[i]=GLfloat(distancePlane.getNormal()[i]/distancePlaneScale);
+	planeEq[3]=GLfloat(0.5-distancePlane.getOffset()/distancePlaneScale);
+	glUniformARB<4>(planeDistancePlaneLocation,1,planeEq);
+	
+	/* Set the texture unit variable: */
+	glUniformARB(planeDistanceMapLocation,textureUnit);
 	}
 
 void PointBasedLightingShader::disable(void)

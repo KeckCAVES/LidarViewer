@@ -1,19 +1,20 @@
 ========================================================================
-README for LiDAR Viewer version 2.8
-Copyright (c) 2004-2011 Oliver Kreylos
+README for LiDAR Viewer version 2.9
+Copyright (c) 2004-2012 Oliver Kreylos
 ========================================================================
 
 Overview
 ========
 
-LiDAR Viewer is a highly interactive application for visualization and
-analysis of large 3D point cloud data, such as produced by terrestrial
-or airborne LiDAR scanning. LiDAR Viewer is based on the Vrui software
-development toolkit (see http://idav.ucdavis.edu/~okreylos/ResDev/Vrui),
-and runs in a variety of environments ranging from laptop or desktop
-computers over semi-immersive environments such as Geowalls to fully
-immersive virtual reality environments such as CAVEs. More information
-about LiDAR Viewer can be found at http://www.keckcaves.org.
+LiDAR Viewer is a highly interactive application for processing,
+visualization and analysis of large 3D point cloud data, such as
+produced by terrestrial or airborne LiDAR scanning. LiDAR Viewer is
+based on the Vrui software development toolkit (see
+http://idav.ucdavis.edu/~okreylos/ResDev/Vrui), and runs in a variety of
+environments ranging from laptop or desktop computers over
+semi-immersive environments such as Geowalls to fully immersive virtual
+reality environments such as CAVEs. More information about LiDAR Viewer
+can be found at http://www.keckcaves.org.
 
 LiDAR Viewer's development was supported by the University of
 California, Davis, by the UC Davis W.M. Keck Center for Active
@@ -37,7 +38,7 @@ rates.
 Requirements
 ============
 
-LiDAR Viewer version 2.8 requires Vrui version 2.2 build 001 or newer.
+LiDAR Viewer version 2.9 requires Vrui version 2.4 build 001 or newer.
 
 Installation Guide
 ==================
@@ -64,11 +65,14 @@ accounts.
 2. Change into LiDAR Viewer base directory:
    > cd LidarViewer-<version>
 
-3. Adapt makefile if Vrui installation path is *not* ~/Vrui-2.2 by
-   setting the VRUIDIR variable to the correct location. VRUIDIR is
-   *not* the directory containing Vrui's sources (and the Vrui README
-   file), but the directory specified via the INSTALLDIR variable in
-   Vrui's makefile.
+3. If the Vrui version installed in step 0 was not 2.4, or Vrui's
+   installation directory was changed from the default of ~/Vrui-2.4,
+   adapt the makefile using a text editor. Change the value of
+   VRUI_MAKEDIR close to the beginning of the file as follows:
+   VRUI_MAKEDIR := <Vrui install dir>/share/make
+   Where <Vrui install dir> is the installation directory chosen in
+   step 0. Use $(HOME) to refer to the user's home directory instead
+   of ~.
 
 4. Optional: Adapt makefile if LiDAR Viewer is to be installed in a
    different location, for example /usr/local. Set INSTALLDIR to the
@@ -134,5 +138,5 @@ inside a component. To allow customization, the LiDAR Viewer components
 read many of their options from a configuration file at startup. All
 LiDAR Viewer components will search for this configuration file,
 LidarViewer.cfg, in an etc directory underneath the installation
-directory (~/src/LidarViewer-<version>/etcLidarViewer-<version> in the
+directory (~/src/LidarViewer-<version>/etc/LidarViewer-<version> in the
 default installation, INSTALLDIR>/etc/LidarViewer-<version> otherwise).

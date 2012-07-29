@@ -111,3 +111,32 @@ LiDAR Viewer 2.8:
   printed.
 - Added ability to load and store selector tools' states in
   configuration files.
+
+LiDAR Viewer 2.9:
+- Bumped Vrui version requirement to 2.4-001.
+- New capability to exaggerate distance to arbitrary planes in real time
+  during 3D visualization in LiDAR Viewer.
+  - Works with Vrui's measurement tool via a coordinate transformer.
+- Clipping planes now work while lighting is enabled.
+- Plane distance texture mapping now respects the lighting flag.
+- Added background read-ahead to pre-processor's input filters for a
+  slight speed-up when reading source files.
+- Parallelized octree generation in LiDAR pre-processor for significant
+  speed-up (about 3x on a 4-core CPU).
+- Made handling of offsets consistent in LiDAR Viewer:
+  - Selected points are saved in original coordinate system
+    - Upped field width in ASCII exporter to handle typical offsets
+  - Extracted primitives are reported in original coordinate system
+  - Primitives are saved in original coordinate system
+- LiDAR Exporter saves point in original coordinate system
+- LiDAR subtractor properly handles offsets
+  - Removes LiDAR file's offset from subtraction set before comparison
+  - Adds offset before storing result points in octree
+  - Offset defaults to same offset as LiDAR file
+- LiDAR subtractor has same command line options as LiDAR preprocessor,
+  as far as applicable
+- LiDAR subtractor reads default values from LidarViewer.cfg
+- Added -boxOnly command line option to CalcLasRange to only report
+  bounding boxes; will only read headers and not entire files.
+- Added file selection dialogs for "Save Selection..." and "Save
+  Primitives..." menu entries.

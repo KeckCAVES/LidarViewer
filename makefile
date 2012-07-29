@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2011 Oliver Kreylos
+# Copyright (c) 2004-2012 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -25,7 +25,7 @@
 # matches the default Vrui installation; if Vrui's installation
 # directory was changed during Vrui's installation, the directory below
 # must be adapted.
-VRUI_MAKEDIR := $(HOME)/Vrui-2.2/share/make
+VRUI_MAKEDIR := $(HOME)/Vrui-2.4/share/make
 
 # Base installation directory for the example programs. If this is set
 # to the default of $(PWD), the example programs do not have to be
@@ -44,7 +44,7 @@ INSTALLDIR := $(shell pwd)
 # subsequent release versions of LiDAR Viewer from clobbering each
 # other. The value should be identical to the major.minor version
 # number found in VERSION in the root package directory.
-VERSION = 2.8
+VERSION = 2.9
 
 # Set up resource directories: */
 CONFIGDIR = etc/LidarViewer-$(VERSION)
@@ -103,6 +103,7 @@ include $(VRUI_MAKEDIR)/BasicMakefile
 
 CALCLASRANGE_SOURCES = CalcLasRange.cpp
 
+$(EXEDIR)/CalcLasRange: PACKAGES += MYCOMM
 $(EXEDIR)/CalcLasRange: $(OBJDIR)/CalcLasRange.o
 .PHONY: CalcLasRange
 CalcLasRange: $(EXEDIR)/CalcLasRange
@@ -117,6 +118,7 @@ LIDARPREPROCESSOR_SOURCES = SplitPoints.cpp \
 
 $(OBJDIR)/LidarPreprocessor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
 
+$(EXEDIR)/LidarPreprocessor: PACKAGES += MYCOMM
 $(EXEDIR)/LidarPreprocessor: $(LIDARPREPROCESSOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarPreprocessor
 LidarPreprocessor: $(EXEDIR)/LidarPreprocessor
@@ -127,6 +129,8 @@ LIDARSUBTRACTOR_SOURCES = LidarProcessOctree.cpp \
                           LidarOctreeCreator.cpp \
                           PointAccumulator.cpp \
                           LidarSubtractor.cpp
+
+$(OBJDIR)/LidarSubtractor.o: CFLAGS += -DLIDARVIEWER_CONFIGFILENAME='"$(ETCINSTALLDIR)/LidarViewer.cfg"'
 
 $(EXEDIR)/LidarSubtractor: $(LIDARSUBTRACTOR_SOURCES:%.cpp=$(OBJDIR)/%.o)
 .PHONY: LidarSubtractor

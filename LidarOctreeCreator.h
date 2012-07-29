@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarOctreeCreator - Class to create LiDAR octrees from point clouds
 using an out-of-core algorithm.
-Copyright (c) 2007-2011 Oliver Kreylos
+Copyright (c) 2007-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -26,6 +26,11 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include <vector>
 #include <string>
+#include <Threads/Mutex.h>
+#include <Threads/MutexCond.h>
+#include <Threads/Atomic.h>
+#include <Threads/Thread.h>
+#include <Threads/Queue.h>
 #include <IO/StandardFile.h>
 
 #include "LidarTypes.h"
@@ -47,24 +52,35 @@ class LidarOctreeCreator
 		{
 		/* Elements: */
 		public:
+		Node* parent; // Pointer to the node's parent
 		Node* children; // Pointer to array of eight child nodes (0 if node is leaf node)
+		unsigned int level; // Tree level containing this node (root is at level 0)
 		Scalar detailSize; // Detail size of this node (distance between nearest neighbors)
 		unsigned int numPoints; // Number of points belonging to this node
-		LidarPoint* points; // Pointer to the points belonging to this node
-		TempFile::Offset pointsOffset; // Offset of the node's point set in the temporary point file
+		Threads::Atomic<unsigned char> numChildrenDone; // Counts the number of children of this node whose point sets have been created
+		bool pointsPrivate; // Flag whether this node owns the point array
+		union
+			{
+			LidarPoint* points; // Pointer to the points belonging to this node
+			TempFile::Offset pointsOffset; // Offset of the node's point set in the temporary point file
+			};
 		LidarFile::Offset octreeNodeOffset; // Offset of node's structure data in the resulting octree file
 		LidarFile::Offset octreeDataOffset; // Offset of node's point and ancillary data in the resulting octree file, in units of data record size
 		
 		/* Constructors and destructors: */
 		Node(void) // Creates an empty leaf node
 			:children(0),
-			 numPoints(0),points(0)
+			 detailSize(0),
+			 numPoints(0),
+			 numChildrenDone(0),
+			 pointsPrivate(false),points(0)
 			{
 			};
 		~Node(void) // Destroys a node and its subtree
 			{
 			delete[] children;
-			delete[] points;
+			if(pointsPrivate)
+				delete[] points;
 			};
 		};
 	
@@ -74,6 +90,7 @@ class LidarOctreeCreator
 		public:
 		TempFile* file; // Pointer to the temporary point file
 		std::string fileName; // Name of the temporary point file
+		Threads::Mutex mutex; // Mutex to serialize write access to the temporary point file
 		
 		/* Constructors and destructors: */
 		TempPointFile(void)
@@ -82,7 +99,7 @@ class LidarOctreeCreator
 			};
 		};
 	
-	typedef std::vector<TempPointFile> TempPointFileList; // Type for lists of temporary point files
+	typedef std::vector<TempPointFile*> TempPointFileList; // Type for lists of temporary point files
 	
 	/* Elements: */
 	size_t maxNumCachablePoints; // Maximum number of points to be held in memory at any time
@@ -91,8 +108,14 @@ class LidarOctreeCreator
 	Box domainBox; // Bounding box of all points in the point set
 	Cube rootDomain; // The domain of the root node
 	Node root; // The octree's root node
+	
+	Threads::Queue<Node*> subsampleQueue; // Subsample request queue
+	Threads::Thread* subsampleThreads; // Array of subsampling threads
+	
 	std::string tempPointFileNameTemplate; // Template to generate temporary point file names
+	Threads::Mutex tempPointFilesMutex; // Mutex serializing access to the temporary point file list
 	TempPointFileList tempPointFiles; // Vector of temporary point files for each tree level
+	
 	size_t totalNumPoints; // Total number of points in all input files
 	size_t totalNumReadPoints; // Total number of points read from the temporary octrees; should equal the total number of points in the end
 	unsigned int totalNumNodes; // Total number of nodes in the octree
@@ -102,16 +125,17 @@ class LidarOctreeCreator
 	unsigned int nextNumWrittenNodesUpdate; // Next number of written nodes at which to print a percentage update
 	
 	/* Private methods: */
-	void writeNodePoints(Node& node,unsigned int level); // Writes a node's points to a temporary point file
-	void subsample(Node& node,bool deleteAllPoints);
-	void createSubTree(Node& node,const Cube& nodeDomain,unsigned int level);
-	void createSubTreeWithPoints(Node& node,const Cube& nodeDomain,LidarPoint* points,size_t numPoints,unsigned int level);
+	void writeNodePoints(Node& node); // Writes a node's points to a temporary point file
+	void subsample(Node& node);
+	void* subsampleThreadMethod(void);
+	void createSubTree(Node& node,const Cube& nodeDomain);
+	void createSubTreeWithPoints(Node& node,const Cube& nodeDomain);
 	void calcFileOffsets(Node& node,unsigned int level,LidarFile::Offset& octreeFilePos,LidarFile::Offset& dataFilePos);
 	void writeSubtree(const Node& node,unsigned int level,TempFile& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer);
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,const TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
+	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,int numThreads,const TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
 	~LidarOctreeCreator(void);
 	
 	/* Methods: */

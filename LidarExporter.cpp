@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarExporter - Utility to export points from LiDAR files to ASCII files
 in xyzrgb format.
-Copyright (c) 2010 Oliver Kreylos
+Copyright (c) 2010-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -52,8 +52,8 @@ class PointSaver
 		{
 		double pos[3];
 		for(int i=0;i<3;++i)
-			pos[i]=double(offset[i])+double(point[i]);
-		fprintf(resultFile.getFilePtr(),"%.6f %.6f %.6f %03d %03d %03d\n",pos[0],pos[1],pos[2],point.value[0],point.value[1],point.value[2]);
+			pos[i]=double(point[i])+double(offset[i]);
+		fprintf(resultFile.getFilePtr(),"%.12g %.12g %.12g %u %u %u\n",pos[0],pos[1],pos[2],point.value[0],point.value[1],point.value[2]);
 		++numPoints;
 		}
 	size_t getNumPoints(void) const
@@ -85,7 +85,7 @@ int main(int argc,char* argv[])
 				for(int j=0;j<6;++j)
 					{
 					++i;
-					box[j]=Box::Scalar(atof(argv[i]));
+					box[j]=atof(argv[i]);
 					}
 				}
 			else
@@ -122,11 +122,16 @@ int main(int argc,char* argv[])
 			{
 			lbox.min[i]=Box::Scalar(box[i]-lpo.getOffset()[i]);
 			lbox.max[i]=Box::Scalar(box[3+i]-lpo.getOffset()[i]);
-			lpo.processPointsInBox(lbox,ps);
 			}
+		
+		/* Exports points from inside the box: */
+		lpo.processPointsInBox(lbox,ps);
 		}
 	else
+		{
+		/* Export all points: */
 		lpo.processPoints(ps);
+		}
 	
 	/* Print statistics: */
 	std::cout<<ps.getNumPoints()<<" points saved"<<std::endl;

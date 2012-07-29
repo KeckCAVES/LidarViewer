@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2011 Oliver Kreylos
+Copyright (c) 2007-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,7 +24,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #ifndef TEMPOCTREE_INCLUDED
 #define TEMPOCTREE_INCLUDED
 
-#include <vector>
+#include <deque>
+#include <Threads/MutexCond.h>
+#include <Threads/Thread.h>
 #include <IO/StandardFile.h>
 
 #include "LidarTypes.h"
@@ -33,8 +35,6 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 class TempOctree
 	{
 	/* Embedded classes: */
-	public:
-	typedef std::vector<LidarPoint> LidarPointList; // Type for lists of LiDAR points
 	private:
 	typedef IO::StandardFile File; // Type representing temporary octree files
 	typedef File::Offset Offset; // Type for offsets in temporary octree files
@@ -45,7 +45,11 @@ class TempOctree
 		public:
 		Cube domain; // Node's domain
 		size_t numPoints; // Total number of points contained in the node's subtree
-		Offset pointsOffset; // Offset of node's points in temporary octree file if node is a leaf (0 for interior nodes)
+		union
+			{
+			LidarPoint* points; // Pointer to array of points contained in the node's subtree; used only during tree creation
+			Offset pointsOffset; // Offset of node's points in temporary octree file if node is a leaf (0 for interior nodes)
+			};
 		Node* children; // Pointer to array of eight children if node is interior (0 for leaf nodes)
 		
 		/* Constructors and destructors: */
@@ -69,10 +73,15 @@ class TempOctree
 	unsigned int maxNumPointsPerNode; // The maximum number of points that can be stored in each leaf node
 	Box pointBbox; // Bounding box containing all points in this octree
 	Node root; // Root of the temporary octree
+	Threads::MutexCond writeQueueCond; // Condition variable to signal new entries in the write queue
+	std::deque<Node*> writeQueue; // Queue of octree leaf nodes to be written to the octree file
+	volatile bool writerThreadRun; // Flag to shut down the writer thread after the octree has been built
+	Threads::Thread writerThread; // Thread to write leaf nodes' point sets to the octree file in the background
 	
 	/* Private methods: */
-	void createSubTree(Node& node,LidarPoint* points,size_t numPoints);
-	void getPointsInCube(Node& node,const Cube& cube,LidarPointList& points);
+	void* writerThreadMethod(void);
+	void createSubTree(Node& node);
+	LidarPoint* getPointsInCube(Node& node,const Cube& cube,LidarPoint* points);
 	
 	/* Constructors and destructors: */
 	public:
@@ -96,9 +105,9 @@ class TempOctree
 		{
 		return root.boundNumPointsInCube(cube);
 		};
-	void getPointsInCube(const Cube& cube,LidarPointList& points) // Returns exactly the points contained in the given cube
+	LidarPoint* getPointsInCube(const Cube& cube,LidarPoint* points) // Returns exactly the points contained in the given cube and stores them in the given point array; returns number of points written
 		{
-		getPointsInCube(root,cube,points);
+		return getPointsInCube(root,cube,points);
 		};
 	};
 

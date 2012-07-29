@@ -1,7 +1,7 @@
 /***********************************************************************
-CalcLasRange - Utility program to calculate the range of point return
-intensities stored in a .LAS file.
-Copyright (c) 2006-2011 Oliver Kreylos
+CalcLasRange - Utility program to calculate the spatial extent and range
+of point return intensities or colors stored in a set of .LAS files.
+Copyright (c) 2006-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -24,71 +24,98 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <string.h>
 #include <iostream>
 #include <IO/SeekableFile.h>
-#include <IO/OpenFile.h>
+#include <IO/ReadAheadFilter.h>
+#include <Comm/OpenFile.h>
+#include <Math/Math.h>
 #include <Math/Constants.h>
 
-size_t checkLasFileRange(const char* fileName,double bbox[6],float intensityRange[2],float rgbRange[3][2])
+size_t checkLasFileRange(const char* fileName,double bbox[6],bool getColorRange,float intensityRange[2],float rgbRange[3][2])
 	{
 	/* Open the LAS input file: */
-	IO::SeekableFilePtr file(IO::openSeekableFile(fileName));
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
-	/* Read the LAS file header: */
-	char signature[4];
-	file->read(signature,4);
-	if(memcmp(signature,"LASF",4)!=0)
+	/* Process the LAS file header: */
+	unsigned char pointDataFormat=0;
+	unsigned int numPointRecords=0;
+	unsigned int pointDataOffset=0;
+	try
 		{
-		std::cout<<"File "<<fileName<<" is not a LAS file"<<std::endl;
+		/* Read the LAS file header: */
+		char signature[4];
+		file->read(signature,4);
+		if(memcmp(signature,"LASF",4)!=0)
+			{
+			std::cout<<"File "<<fileName<<" is not a LAS file"<<std::endl;
+			return 0;
+			}
+		
+		file->read<unsigned short>(); // Ignore file source ID
+		file->read<unsigned short>(); // Ignore reserved field
+		file->read<unsigned int>(); // Ignore project ID
+		file->read<unsigned short>(); // Ignore project ID
+		file->read<unsigned short>(); // Ignore project ID
+		file->skip<char>(8); // Ignore project ID
+		file->skip<char>(2); // Ignore file version number
+		file->skip<char>(32); // Ignore system identifier
+		file->skip<char>(32); // Ignore generating software
+		file->read<unsigned short>(); // Ignore file creation day of year
+		file->read<unsigned short>(); // Ignore file creation year
+		file->read<unsigned short>(); // Ignore header size
+		pointDataOffset=file->read<unsigned int>();
+		file->read<unsigned int>(); // Ignore number of variable-length records
+		pointDataFormat=file->read<unsigned char>();
+		unsigned short pointDataRecordLength=file->read<unsigned short>();
+		numPointRecords=file->read<unsigned int>();
+		unsigned int numPointsByReturn[5];
+		file->read(numPointsByReturn,5);
+		double scale[3];
+		file->read(scale,3);
+		double offset[3];
+		file->read(offset,3);
+		double min[3],max[3];
+		for(int i=0;i<3;++i)
+			{
+			max[i]=file->read<double>();
+			min[i]=file->read<double>();
+			if(bbox[i]>min[i])
+				bbox[i]=min[i];
+			if(bbox[3+i]<max[i])
+				bbox[3+i]=max[i];
+			}
+		
+		#if 0
+		std::cout<<"Input file contains "<<numPointRecords<<" points."<<std::endl;
+		std::cout<<"Point record size: "<<pointDataRecordLength<<" bytes"<<std::endl;
+		std::cout<<"Point transformation scale and offset: ("<<scale[0]<<", "<<scale[1]<<", "<<scale[2]<<"), ("<<offset[0]<<", "<<offset[1]<<", "<<offset[2]<<")"<<std::endl;
+		std::cout<<"Point set bounds: ["<<min[0]<<", "<<max[0]<<"] x ["<<min[1]<<", "<<max[1]<<"] x ["<<min[2]<<", "<<max[2]<<"]"<<std::endl;
+		#endif
+		}
+	catch(std::runtime_error err)
+		{
+		std::cout<<"File "<<fileName<<" caused exception "<<err.what()<<" while reading LAS file header"<<std::endl;
 		return 0;
 		}
 	
-	file->read<unsigned short>(); // Ignore file source ID
-	file->read<unsigned short>(); // Ignore reserved field
-	file->read<unsigned int>(); // Ignore project ID
-	file->read<unsigned short>(); // Ignore project ID
-	file->read<unsigned short>(); // Ignore project ID
-	file->skip<char>(8); // Ignore project ID
-	file->skip<char>(2); // Ignore file version number
-	file->skip<char>(32); // Ignore system identifier
-	file->skip<char>(32); // Ignore generating software
-	file->read<unsigned short>(); // Ignore file creation day of year
-	file->read<unsigned short>(); // Ignore file creation year
-	file->read<unsigned short>(); // Ignore header size
-	IO::SeekableFile::Offset pointDataOffset=IO::SeekableFile::Offset(file->read<unsigned int>());
-	file->read<unsigned int>(); // Ignore number of variable-length records
-	unsigned char pointDataFormat=file->read<unsigned char>();
-	unsigned short pointDataRecordLength=file->read<unsigned short>();
-	unsigned int numPointRecords=file->read<unsigned int>();
-	unsigned int numPointsByReturn[5];
-	file->read(numPointsByReturn,5);
-	double scale[3];
-	file->read(scale,3);
-	double offset[3];
-	file->read(offset,3);
-	double min[3],max[3];
-	for(int i=0;i<3;++i)
+	if(!getColorRange)
 		{
-		max[i]=file->read<double>();
-		min[i]=file->read<double>();
-		if(bbox[i]>min[i])
-			bbox[i]=min[i];
-		if(bbox[3+i]<max[i])
-			bbox[3+i]=max[i];
+		std::cout<<" done."<<std::endl;
+		return numPointRecords;
 		}
-	
-	#if 0
-	std::cout<<"Input file contains "<<numPointRecords<<" points."<<std::endl;
-	std::cout<<"Point record size: "<<pointDataRecordLength<<" bytes"<<std::endl;
-	std::cout<<"Point transformation scale and offset: ("<<scale[0]<<", "<<scale[1]<<", "<<scale[2]<<"), ("<<offset[0]<<", "<<offset[1]<<", "<<offset[2]<<")"<<std::endl;
-	std::cout<<"Point set bounds: ["<<min[0]<<", "<<max[0]<<"] x ["<<min[1]<<", "<<max[1]<<"] x ["<<min[2]<<", "<<max[2]<<"]"<<std::endl;
-	#endif
 	
 	/* Read all points: */
 	std::cout<<"Reading input points..."<<std::flush;
 	unsigned int pointIndex=0;
 	try
 		{
-		file->setReadPosAbs(pointDataOffset);
+		/* Skip to the beginning of the point data records: */
+		if(pointDataOffset<227)
+			{
+			std::cout<<"File "<<fileName<<" has invalid LAS file header"<<std::endl;
+			return 0;
+			}
+		file->skip<unsigned char>(pointDataOffset-227);
+		
 		for(pointIndex=0;pointIndex<numPointRecords;++pointIndex)
 			{
 			/* Read the point position: */
@@ -126,7 +153,7 @@ size_t checkLasFileRange(const char* fileName,double bbox[6],float intensityRang
 		}
 	catch(std::runtime_error err)
 		{
-		std::cout<<"terminated after "<<pointIndex<<" point records due to exception "<<err.what()<<std::endl;
+		std::cout<<" terminated after "<<pointIndex<<" point records due to exception "<<err.what()<<std::endl;
 		}
 	return pointIndex;
 	}
@@ -148,16 +175,37 @@ int main(int argc,char* argv[])
 		rgbRange[i][0]=Math::Constants<float>::max;
 		rgbRange[i][1]=Math::Constants<float>::min;
 		}
-	size_t totalNumPoints=0;
-	for(int i=1;i<argc;++i)
+	
+	int i=1;
+	int numFiles=argc-1;
+	bool getColorRange=true;
+	if(strcasecmp(argv[i],"-boxOnly")==0)
 		{
-		std::cout<<"Checking file "<<i<<" of "<<argc-1<<":"<<argv[i]<<" "<<std::flush;
-		totalNumPoints+=checkLasFileRange(argv[i],bbox,intensityRange,rgbRange);
+		/* Don't read all points and calculate intensity and color ranges: */
+		getColorRange=false;
+		++i;
+		--numFiles;
+		}
+	
+	/* Process all LAS files from the command line: */
+	size_t totalNumPoints=0;
+	for(;i<argc;++i)
+		{
+		std::cout<<"Checking file "<<i<<" of "<<numFiles<<":"<<argv[i]<<"..."<<std::flush;
+		totalNumPoints+=checkLasFileRange(argv[i],bbox,getColorRange,intensityRange,rgbRange);
 		}
 	std::cout<<"Total number of points: "<<totalNumPoints<<std::endl;
 	std::cout<<"Overall point bounding box: ["<<bbox[0]<<", "<<bbox[3]<<"] x ["<<bbox[1]<<", "<<bbox[4]<<"] x ["<<bbox[2]<<", "<<bbox[5]<<"]"<<std::endl;
-	std::cout<<"Overall intensity range: ["<<intensityRange[0]<<", "<<intensityRange[1]<<"]"<<std::endl;
-	std::cout<<"Overall RGB range: ["<<rgbRange[0][0]<<", "<<rgbRange[0][1]<<"], ["<<rgbRange[1][0]<<", "<<rgbRange[1][1]<<"], ["<<rgbRange[2][0]<<", "<<rgbRange[2][1]<<"]"<<std::endl;
+	if(getColorRange)
+		{
+		std::cout<<"Overall intensity range: ["<<intensityRange[0]<<", "<<intensityRange[1]<<"]"<<std::endl;
+		std::cout<<"Overall RGB range: ["<<rgbRange[0][0]<<", "<<rgbRange[0][1]<<"], ["<<rgbRange[1][0]<<", "<<rgbRange[1][1]<<"], ["<<rgbRange[2][0]<<", "<<rgbRange[2][1]<<"]"<<std::endl;
+		}
+	
+	std::cout<<"Recommended offset vector for LiDAR pre-processor: -lasOffset";
+	for(int i=0;i<3;++i)
+		std::cout<<' '<<-Math::mid(bbox[i],bbox[3+i]);
+	std::cout<<std::endl;
 	
 	return 0;
 	}

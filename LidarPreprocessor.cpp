@@ -1,6 +1,6 @@
 /***********************************************************************
 New version of LiDAR data preprocessor.
-Copyright (c) 2005-2011 Oliver Kreylos
+Copyright (c) 2005-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -36,7 +36,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <IO/File.h>
 #include <IO/SeekableFile.h>
 #include <IO/OpenFile.h>
+#include <IO/ReadAheadFilter.h>
 #include <IO/ValueSource.h>
+#include <Comm/OpenFile.h>
 #include <Math/Math.h>
 #include <Math/Constants.h>
 #include <Geometry/OrthogonalTransformation.h>
@@ -51,7 +53,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 void loadPointFileBin(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the binary input file: */
-	IO::FilePtr file(IO::openFile(fileName));
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the number of points in the file: */
@@ -72,7 +74,7 @@ void loadPointFileBin(PointAccumulator& pa,const char* fileName)
 void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the binary input file: */
-	IO::FilePtr file(IO::openFile(fileName));
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the number of points in the file: */
@@ -95,7 +97,7 @@ void loadPointFileBinRgb(PointAccumulator& pa,const char* fileName)
 void loadPointFileLas(PointAccumulator& pa,const char* fileName,unsigned int classMask)
 	{
 	/* Open the LAS input file: */
-	IO::SeekableFilePtr file(IO::openSeekableFile(fileName));
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the LAS file header: */
@@ -116,7 +118,7 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,unsigned int cla
 	file->skip<unsigned short>(1); // Ignore file creation day of year
 	file->skip<unsigned short>(1); // Ignore file creation year
 	file->skip<unsigned short>(1); // Ignore header size
-	IO::SeekableFile::Offset pointDataOffset=IO::SeekableFile::Offset(file->read<unsigned int>());
+	unsigned int pointDataOffset=file->read<unsigned int>();
 	file->skip<unsigned int>(1); // Ignore number of variable-length records
 	unsigned char pointDataFormat=file->read<unsigned char>();
 	unsigned short pointDataRecordLength=file->read<unsigned short>();
@@ -161,12 +163,16 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,unsigned int cla
 			return;
 		}
 	
+	/* Skip to the beginning of the point records: */
+	if(pointDataOffset<227)
+		return;
+	file->skip<unsigned char>(pointDataOffset-227);
+	
 	/* Apply the LAS offset to the point accumulator's point offset: */
 	PointAccumulator::Vector originalPointOffset=pa.getPointOffset();
 	pa.setPointOffset(originalPointOffset+offset);
 	
 	/* Read all points: */
-	file->setReadPosAbs(pointDataOffset);
 	for(size_t i=0;i<numPointRecords;++i)
 		{
 		/* Read the point position: */
@@ -223,7 +229,7 @@ void loadPointFileLas(PointAccumulator& pa,const char* fileName,unsigned int cla
 void loadPointFileXyzi(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the ASCII input file: */
-	IO::ValueSource reader(IO::openFile(fileName));
+	IO::ValueSource reader(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	reader.setPunctuation('#',true);
 	reader.setPunctuation('\n',true);
 	reader.skipWs();
@@ -263,7 +269,7 @@ void loadPointFileXyzi(PointAccumulator& pa,const char* fileName)
 void loadPointFileXyzrgb(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the ASCII input file: */
-	IO::ValueSource reader(IO::openFile(fileName));
+	IO::ValueSource reader(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	reader.setPunctuation('#',true);
 	reader.setPunctuation('\n',true);
 	reader.skipWs();
@@ -337,7 +343,7 @@ void loadPointFileGenericASCII(PointAccumulator& pa,const char* fileName,int num
 		componentValues[i]=255.0;
 	
 	/* Open the ASCII input file: */
-	IO::ValueSource reader(IO::openFile(fileName));
+	IO::ValueSource reader(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	if(strictCsv)
 		reader.setWhitespace("");
 	reader.setPunctuation("#,\n");
@@ -436,7 +442,7 @@ void loadPointFileBlockedASCII(PointAccumulator& pa,const char* fileName,int num
 	double* componentValues=new double[numComponents];
 	
 	/* Open the ASCII input file: */
-	IO::ValueSource reader(IO::openFile(fileName));
+	IO::ValueSource reader(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	reader.setPunctuation("#,\n");
 	reader.skipWs();
 	size_t lineNumber=1;
@@ -640,7 +646,7 @@ double angdiadistscaled(double z)
 void loadPointFileIdl(PointAccumulator& pa,const char* fileName)
 	{
 	/* Open the IDL input file: */
-	IO::FilePtr file(IO::openFile(fileName));
+	IO::FilePtr file(new IO::ReadAheadFilter(Comm::openFile(fileName)));
 	file->setEndianness(Misc::LittleEndian);
 	
 	/* Read the IDL file header: */
@@ -897,6 +903,7 @@ int main(int argc,char* argv[])
 	unsigned int tempOctreeMaxNumPointsPerNode=4096;
 	std::string tempOctreeFileNameTemplate="/tmp/LidarPreprocessorTempOctree";
 	unsigned int maxNumPointsPerNode=4096;
+	int numThreads=1;
 	std::string tempPointFileNameTemplate="/tmp/LidarPreprocessorTempPoints";
 	
 	try
@@ -910,6 +917,7 @@ int main(int argc,char* argv[])
 		tempOctreeMaxNumPointsPerNode=cfg.retrieveValue<unsigned int>("./tempOctreeMaxNumPointsPerNode",tempOctreeMaxNumPointsPerNode);
 		tempOctreeFileNameTemplate=cfg.retrieveValue<std::string>("./tempOctreeFileNameTemplate",tempOctreeFileNameTemplate);
 		maxNumPointsPerNode=cfg.retrieveValue<unsigned int>("./maxNumPointsPerNode",maxNumPointsPerNode);
+		numThreads=cfg.retrieveValue<int>("./numThreads",numThreads);
 		tempPointFileNameTemplate=cfg.retrieveValue<std::string>("./tempPointFileNameTemplate",tempPointFileNameTemplate);
 		}
 	catch(std::runtime_error err)
@@ -949,6 +957,14 @@ int main(int argc,char* argv[])
 					maxNumPointsPerNode=(unsigned int)(atoi(argv[i]));
 				else
 					std::cerr<<"Dangling -np flag on command line"<<std::endl;
+				}
+			else if(strcasecmp(argv[i]+1,"nt")==0)
+				{
+				++i;
+				if(i<argc)
+					numThreads=atoi(argv[i]);
+				else
+					std::cerr<<"Dangling -nt flag on command line"<<std::endl;
 				}
 			else if(strcasecmp(argv[i]+1,"ooc")==0)
 				{
@@ -1004,6 +1020,31 @@ int main(int argc,char* argv[])
 					}
 				else
 					std::cerr<<"Dangling -lasOffset flag on command line"<<std::endl;
+				}
+			else if(strcasecmp(argv[i]+1,"lasOffsetFile")==0)
+				{
+				++i;
+				if(havePoints)
+					std::cerr<<"Ignoring lasOffsetFile argument; must be specified before any input files are read"<<std::endl;
+				else if(i<argc)
+					{
+					/* Read the point offset from a binary file: */
+					try
+						{
+						IO::FilePtr offsetFile=Comm::openFile(argv[i]);
+						offsetFile->setEndianness(Misc::LittleEndian);
+						PointAccumulator::Vector newPointOffset;
+						offsetFile->read(newPointOffset.getComponents(),3);
+						pa.setPointOffset(newPointOffset);
+						}
+					catch(std::runtime_error err)
+						{
+						/* Print a warning and carry on: */
+						std::cerr<<"Ignoring lasOffsetFile argument due to error "<<err.what()<<" when reading file "<<argv[i]<<std::endl;
+						}
+					}
+				else
+					std::cerr<<"Dangling -lasOffsetFile flag on command line"<<std::endl;
 				}
 			else if(strcasecmp(argv[i]+1,"noLasOffset")==0)
 				pa.resetPointOffset();
@@ -1304,7 +1345,16 @@ int main(int argc,char* argv[])
 	/* Check if an output file name was given: */
 	if(outputFileName==0)
 		{
-		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> -np <max points per node> <input file spec 1> ... <input file spec n>"<<std::endl;
+		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> [<option 1>] ... [<option n>] <input file spec 1> ... <input file spec n>"<<std::endl;
+		std::cerr<<"Options: -np <max points per node>"<<std::endl;
+		std::cerr<<"         -nt <number of threads>"<<std::endl;
+		std::cerr<<"         -ooc <memory cache size in MB>"<<std::endl;
+		std::cerr<<"         -to <temporary octree file name template>"<<std::endl;
+		std::cerr<<"         -tp <temporary point file name template>"<<std::endl;
+		std::cerr<<"         -lasOffset <offset x> <offset y> <offset z>"<<std::endl;
+		std::cerr<<"         -lasOffsetFile <binary offset file name>"<<std::endl;
+		std::cerr<<"         -noLasOffset"<<std::endl;
+		std::cerr<<"         -transform <orthogonal transformation specification>"<<std::endl;
 		std::cerr<<"Input file spec: [-c <red> <green> <blue>] [-header <number of header lines>] <format spec> <file name>"<<std::endl;
 		std::cerr<<"Format spec: -AUTO"<<std::endl;
 		std::cerr<<"             -BIN"<<std::endl;
@@ -1317,8 +1367,11 @@ int main(int argc,char* argv[])
 		std::cerr<<"             -ASCIIRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
 		std::cerr<<"             -CSV <x column> <y column> <z column> [<intensity column>]"<<std::endl;
 		std::cerr<<"             -CSVRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
+		std::cerr<<"             -BLOCKEDASCII <x column> <y column> <z column> [<intensity column>]"<<std::endl;
+		std::cerr<<"             -BLOCKEDASCIIRGB <x column> <y column> <z column> [<r column> <g column> <b column>]"<<std::endl;
 		std::cerr<<"             -IDL"<<std::endl;
 		std::cerr<<"             -OCT"<<std::endl;
+		std::cerr<<"             -LIDAR"<<std::endl;
 		return 1;
 		}
 	
@@ -1328,7 +1381,7 @@ int main(int argc,char* argv[])
 	
 	/* Construct an octree with less than maxPointsPerNode points per leaf: */
 	Misc::Timer createTimer;
-	LidarOctreeCreator tree(pa.getMaxNumCacheablePoints(),maxNumPointsPerNode,pa.getTempOctrees(),tempPointFileNameTemplate+"XXXXXX");
+	LidarOctreeCreator tree(pa.getMaxNumCacheablePoints(),maxNumPointsPerNode,numThreads,pa.getTempOctrees(),tempPointFileNameTemplate+"XXXXXX");
 	
 	/* Delete the temporary point octrees: */
 	pa.deleteTempOctrees();

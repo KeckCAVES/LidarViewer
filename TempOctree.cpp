@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2011 Oliver Kreylos
+Copyright (c) 2007-2012 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -101,27 +101,49 @@ size_t TempOctree::Node::boundNumPointsInCube(const Cube& cube) const
 Methods of class TempOctree:
 ***************************/
 
-void TempOctree::createSubTree(TempOctree::Node& node,LidarPoint* points,size_t numPoints)
+void* TempOctree::writerThreadMethod(void)
+	{
+	while(true)
+		{
+		/* Get the next node from the write queue: */
+		Node* writeNode=0;
+		{
+		Threads::MutexCond::Lock writeQueueLock(writeQueueCond);
+		while(writerThreadRun&&writeQueue.empty())
+			writeQueueCond.wait(writeQueueLock);
+		if(writeQueue.empty())
+			break;
+		writeNode=writeQueue.front();
+		writeQueue.pop_front();
+		}
+		
+		/* Write the node to the octree file: */
+		LidarPoint* points=writeNode->points;
+		writeNode->pointsOffset=file.getWritePos();
+		file.write(points,writeNode->numPoints);
+		}
+	
+	return 0;
+	}
+
+void TempOctree::createSubTree(TempOctree::Node& node)
 	{
 	/* Check if the number of points is smaller than the maximum: */
-	if(numPoints<=size_t(maxNumPointsPerNode))
+	if(node.numPoints<=size_t(maxNumPointsPerNode))
 		{
-		/* Make this node a leaf and write the points to the temporary file: */
-		node.numPoints=numPoints;
-		node.pointsOffset=file.getWritePos();
-		file.write(points,numPoints);
+		/* Queue up this node to be written to the octree file: */
+		Threads::MutexCond::Lock writeQueueLock(writeQueueCond);
+		writeQueue.push_back(&node);
+		writeQueueCond.signal();
 		}
 	else
 		{
 		/* Make this node an interior node: */
-		node.numPoints=numPoints;
-		node.pointsOffset=0;
+		node.children=new Node[8];
 		
 		/* Split the point array between the node's children: */
-		LidarPoint* childPoints[8];
-		size_t childNumPoints[8];
-		childPoints[0]=points;
-		childNumPoints[0]=numPoints;
+		node.children[0].numPoints=node.numPoints;
+		node.children[0].points=node.points;
 		
 		/* Split the point set along the three dimensions, according to the node's center: */
 		int numSplits=1;
@@ -131,25 +153,26 @@ void TempOctree::createSubTree(TempOctree::Node& node,LidarPoint* points,size_t 
 			int leftIndex=0;
 			for(int j=0;j<numSplits;++j,leftIndex+=splitSize*2)
 				{
-				size_t leftNumPoints=splitPoints(childPoints[leftIndex],childNumPoints[leftIndex],i,node.domain.getCenter(i));
-				childPoints[leftIndex+splitSize]=childPoints[leftIndex]+leftNumPoints;
-				childNumPoints[leftIndex+splitSize]=childNumPoints[leftIndex]-leftNumPoints;
-				childNumPoints[leftIndex]=leftNumPoints;
+				size_t leftNumPoints=splitPoints(node.children[leftIndex].points,node.children[leftIndex].numPoints,i,node.domain.getCenter(i));
+				node.children[leftIndex+splitSize].points=node.children[leftIndex].points+leftNumPoints;
+				node.children[leftIndex+splitSize].numPoints=node.children[leftIndex].numPoints-leftNumPoints;
+				node.children[leftIndex].numPoints=leftNumPoints;
 				}
 			}
 		
-		/* Initialize the child nodes and create their subtrees: */
-		node.children=new Node[8];
+		/* Create the node's children's subtrees: */
 		for(int childIndex=0;childIndex<8;++childIndex)
 			{
 			Node& child=node.children[childIndex];
 			child.domain=Cube(node.domain,childIndex);
-			createSubTree(node.children[childIndex],childPoints[childIndex],childNumPoints[childIndex]);
+			createSubTree(node.children[childIndex]);
 			}
+		
+		node.points=0;
 		}
 	}
 
-void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOctree::LidarPointList& points)
+LidarPoint* TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,LidarPoint* points)
 	{
 	/* Compare the cube against this node's domain: */
 	int stat=node.domain.compareCube(cube);
@@ -157,23 +180,19 @@ void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOct
 	if(stat==Cube::SEPARATE)
 		{
 		/* Cube doesn't overlap this node, so don't bother: */
-		return;
 		}
 	else if(node.children!=0)
 		{
 		/* This is an interior node, so delegate to the child nodes: */
 		for(int childIndex=0;childIndex<8;++childIndex)
-			getPointsInCube(node.children[childIndex],cube,points);
+			points=getPointsInCube(node.children[childIndex],cube,points);
 		}
 	else if(stat==Cube::CONTAINS)
 		{
 		/* Add all points in this node to the list: */
 		file.setReadPosAbs(node.pointsOffset);
 		for(unsigned int i=0;i<node.numPoints;++i)
-			{
-			LidarPoint lp=file.read<LidarPoint>();
-			points.push_back(lp);
-			}
+			*(points++)=file.read<LidarPoint>();
 		}
 	else
 		{
@@ -183,9 +202,11 @@ void TempOctree::getPointsInCube(TempOctree::Node& node,const Cube& cube,TempOct
 			{
 			LidarPoint lp=file.read<LidarPoint>();
 			if(cube.contains(lp))
-				points.push_back(lp);
+				*(points++)=lp;
 			}
 		}
+	
+	return points;
 	}
 
 namespace {
@@ -215,7 +236,8 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 	:tempFileName(new char[strlen(fileNameTemplate)+1]),
 	 file(createTempFile(fileNameTemplate),File::ReadWrite),
 	 maxNumPointsPerNode(sMaxNumPointsPerNode),
-	 pointBbox(Box::empty)
+	 pointBbox(Box::empty),
+	 writerThreadRun(true),writerThread(this,&TempOctree::writerThreadMethod)
 	{
 	/* Save the temporary file name: */
 	strcpy(tempFileName,fileNameTemplate);
@@ -247,7 +269,14 @@ TempOctree::TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,
 	root.domain=Cube(pointBbox);
 	
 	/* Create the root node's subtree: */
-	createSubTree(root,points,numPoints);
+	root.numPoints=numPoints;
+	root.points=points;
+	createSubTree(root);
+	
+	/* Wait until the octree file is finished: */
+	writerThreadRun=false;
+	writeQueueCond.signal();
+	writerThread.join();
 	file.flush();
 	}
 
