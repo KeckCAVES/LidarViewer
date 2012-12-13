@@ -292,7 +292,7 @@ class LidarOctree:public GLObject
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize); // Creates octree from the given LiDAR file; cache sizes are in bytes
+	LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlCacheSize); // Creates octree from the given LiDAR file; cache sizes are in bytes
 	virtual ~LidarOctree(void);
 	
 	/* Methods: */

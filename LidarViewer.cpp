@@ -30,6 +30,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Misc/SelfDestructPointer.h>
 #include <Misc/FunctionCalls.h>
 #include <Misc/ThrowStdErr.h>
+#include <Misc/PrintInteger.h>
 #include <Misc/CreateNumberedFileName.h>
 #include <Misc/FileTests.h>
 #include <Misc/StringMarshaller.h>
@@ -183,12 +184,14 @@ void LidarViewer::SelectorLocator::motionCallback(Vrui::LocatorTool::MotionCallb
 			{
 			case ADD:
 				for(int i=0;i<application->numOctrees;++i)
-					application->octrees[i]->selectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
+					if(application->showOctrees[i])
+						application->octrees[i]->selectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
 				break;
 			
 			case SUBTRACT:
 				for(int i=0;i<application->numOctrees;++i)
-					application->octrees[i]->deselectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
+					if(application->showOctrees[i])
+						application->octrees[i]->deselectPoints(LidarOctree::Interactor(modelCenter,modelRadius));
 				break;
 			}
 		}
@@ -349,13 +352,17 @@ GLMotif::Popup* LidarViewer::createDialogMenu(void)
 	
 	GLMotif::SubMenu* dialogMenu=new GLMotif::SubMenu("DialogMenu",dialogMenuPopup,false);
 	
-	showRenderDialogToggle=new GLMotif::ToggleButton("ShowRenderDialogToggle",dialogMenu,"Show Render Dialog");
-	showRenderDialogToggle->setToggle(false);
-	showRenderDialogToggle->getValueChangedCallbacks().add(this,&LidarViewer::showRenderDialogCallback);
+	if(numOctrees>1)
+		{
+		GLMotif::Button* showOctreeDialogButton=new GLMotif::Button("ShowOctreeDialogButton",dialogMenu,"Show Octree Dialog");
+		showOctreeDialogButton->getSelectCallbacks().add(this,&LidarViewer::showOctreeDialogCallback);
+		}
 	
-	showInteractionDialogToggle=new GLMotif::ToggleButton("ShowInteractionDialogToggle",dialogMenu,"Show Interaction Dialog");
-	showInteractionDialogToggle->setToggle(false);
-	showInteractionDialogToggle->getValueChangedCallbacks().add(this,&LidarViewer::showInteractionDialogCallback);
+	GLMotif::Button* showRenderDialogButton=new GLMotif::Button("ShowRenderDialogButton",dialogMenu,"Show Render Dialog");
+	showRenderDialogButton->getSelectCallbacks().add(this,&LidarViewer::showRenderDialogCallback);
+	
+	GLMotif::Button* showInteractionDialogButton=new GLMotif::Button("ShowInteractionDialogButton",dialogMenu,"Show Interaction Dialog");
+	showInteractionDialogButton->getSelectCallbacks().add(this,&LidarViewer::showInteractionDialogCallback);
 	
 	dialogMenu->manageChild();
 	
@@ -395,6 +402,35 @@ GLMotif::PopupMenu* LidarViewer::createMainMenu(void)
 	return mainMenuPopup;
 	}
 
+GLMotif::PopupWindow* LidarViewer::createOctreeDialog(void)
+	{
+	GLMotif::PopupWindow* octreeDialog=new GLMotif::PopupWindow("OctreeDialog",Vrui::getWidgetManager(),"Octree Selection");
+	octreeDialog->setCloseButton(true);
+	octreeDialog->setResizableFlags(false,false);
+	octreeDialog->popDownOnClose();
+	
+	GLMotif::RowColumn* octreeSelection=new GLMotif::RowColumn("OctreeSelection",octreeDialog,false);
+	octreeSelection->setOrientation(GLMotif::RowColumn::HORIZONTAL);
+	octreeSelection->setPacking(GLMotif::RowColumn::PACK_GRID);
+	octreeSelection->setNumMinorWidgets(1);
+	
+	char toggleName[20]="OctreeToggle";
+	char toggleLabel[10];
+	for(int i=0;i<numOctrees;++i)
+		{
+		char* tnPtr=Misc::print(i,toggleName+12+4);
+		while(tnPtr>toggleName+12)
+			*(--tnPtr)='0';
+		GLMotif::ToggleButton* octreeToggle=new GLMotif::ToggleButton(toggleName,octreeSelection,Misc::print(i,toggleLabel+9));
+		octreeToggle->setToggle(showOctrees[i]);
+		octreeToggle->getValueChangedCallbacks().add(this,&LidarViewer::octreeSelectionCallback,i);
+		}
+	
+	octreeSelection->manageChild();
+	
+	return octreeDialog;
+	}
+
 GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	{
 	const GLMotif::StyleSheet& ss=*Vrui::getWidgetManager()->getStyleSheet();
@@ -402,7 +438,7 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	GLMotif::PopupWindow* renderDialog=new GLMotif::PopupWindow("RenderDialog",Vrui::getWidgetManager(),"Render Settings");
 	renderDialog->setCloseButton(true);
 	renderDialog->setResizableFlags(true,false);
-	renderDialog->getCloseCallbacks().add(this,&LidarViewer::renderDialogCloseCallback);
+	renderDialog->popDownOnClose();
 	
 	GLMotif::RowColumn* renderSettings=new GLMotif::RowColumn("RenderSettings",renderDialog,false);
 	renderSettings->setOrientation(GLMotif::RowColumn::VERTICAL);
@@ -592,7 +628,7 @@ GLMotif::PopupWindow* LidarViewer::createInteractionDialog(void)
 	GLMotif::PopupWindow* interactionDialog=new GLMotif::PopupWindow("InteractionDialog",Vrui::getWidgetManager(),"Interaction Settings");
 	interactionDialog->setCloseButton(true);
 	interactionDialog->setResizableFlags(true,false);
-	interactionDialog->getCloseCallbacks().add(this,&LidarViewer::interactionDialogCloseCallback);
+	interactionDialog->popDownOnClose();
 	
 	GLMotif::RowColumn* interactionSettings=new GLMotif::RowColumn("InteractionSettings",interactionDialog,false);
 	interactionSettings->setOrientation(GLMotif::RowColumn::VERTICAL);
@@ -789,7 +825,7 @@ void LidarViewer::setEnableSun(bool newEnableSun)
 
 LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	:Vrui::Application(argc,argv,appDefaults),
-	 numOctrees(0),octrees(0),
+	 numOctrees(0),octrees(0),showOctrees(0),
 	 coordTransform(0),
 	 renderQuality(0),fncWeight(0.5),
 	 pointSize(3.0f),
@@ -808,7 +844,7 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	 primitiveColor(0.5f,0.5f,0.1f,0.5f),
 	 selectedPrimitiveColor(0.1f,0.5f,0.5f,0.5f),
 	 lastPickedPrimitive(-1),
-	 mainMenu(0),renderDialog(0),interactionDialog(0),
+	 mainMenu(0),octreeDialog(0),renderDialog(0),interactionDialog(0),
 	 sceneGraphRoot(0),
 	 dataDirectory(0)
 	{
@@ -928,10 +964,12 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		Misc::throwStdErr("LidarViewer::LidarViewer: No octree file name provided");
 	
 	/* Initialize all octrees: */
+	showOctrees=new bool[numOctrees];
 	for(int i=0;i<numOctrees;++i)
 		{
 		octrees[i]->setRenderQuality(renderQuality);
 		octrees[i]->setTreeUpdateFunction(treeUpdateNotificationCB,0);
+		showOctrees[i]=true;
 		}
 	
 	/* Check if all the octrees have the same linear unit: */
@@ -996,6 +1034,8 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 	/* Create the GUI: */
 	mainMenu=createMainMenu();
 	Vrui::setMainMenu(mainMenu);
+	if(numOctrees>1)
+		octreeDialog=createOctreeDialog();
 	renderDialog=createRenderDialog();
 	interactionDialog=createInteractionDialog();
 	
@@ -1030,6 +1070,7 @@ LidarViewer::~LidarViewer(void)
 	
 	/* Delete the GUI: */
 	delete mainMenu;
+	delete octreeDialog;
 	delete renderDialog;
 	delete interactionDialog;
 	
@@ -1040,6 +1081,7 @@ LidarViewer::~LidarViewer(void)
 	for(int i=0;i<numOctrees;++i)
 		delete octrees[i];
 	delete[] octrees;
+	delete[] showOctrees;
 	}
 
 void LidarViewer::initContext(GLContextData& contextData) const
@@ -1157,7 +1199,8 @@ void LidarViewer::frame(void)
 	
 	/* Prepare the next rendering pass: */
 	for(int i=0;i<numOctrees;++i)
-		octrees[i]->startRenderPass();
+		if(showOctrees[i])
+			octrees[i]->startRenderPass();
 	
 	/* Prepare for interaction with all interactors: */
 	for(LocatorList::iterator lIt=locators.begin();lIt!=locators.end();++lIt)
@@ -1166,7 +1209,8 @@ void LidarViewer::frame(void)
 		if(sl!=0&&sl->ready)
 			{
 			for(int i=0;i<numOctrees;++i)
-				octrees[i]->interact(LidarOctree::Interactor(sl->modelCenter,sl->modelRadius));
+				if(showOctrees[i])
+					octrees[i]->interact(LidarOctree::Interactor(sl->modelCenter,sl->modelRadius));
 			}
 		}
 	}
@@ -1250,11 +1294,13 @@ void LidarViewer::display(GLContextData& contextData) const
 	Point displayCenter=Point(Vrui::getInverseNavigationTransformation().transform(Vrui::getDisplayCenter()));
 	Scalar displaySize=Scalar(Vrui::getInverseNavigationTransformation().getScaling()*Vrui::getDisplaySize());
 	for(int i=0;i<numOctrees;++i)
-		octrees[i]->setFocusAndContext(displayCenter,displaySize*Scalar(0.5),fncWeight);
+		if(showOctrees[i])
+			octrees[i]->setFocusAndContext(displayCenter,displaySize*Scalar(0.5),fncWeight);
 	LidarOctree::Frustum frustum;
 	frustum.setFromGL();
 	for(int i=0;i<numOctrees;++i)
-		octrees[i]->glRenderAction(frustum,contextData);
+		if(showOctrees[i])
+			octrees[i]->glRenderAction(frustum,contextData);
 	
 	if(planeDistanceExaggeration!=1.0)
 		glPopMatrix();
@@ -1424,7 +1470,7 @@ void LidarViewer::saveSelectionCallback(Misc::CallbackData* cbData)
 		/* Create a file selection dialog to select an selection file name: */
 		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> saveSelectionDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Save Selection...",dataDirectory,selectionFileName.c_str(),filter));
 		saveSelectionDialog->getOKCallbacks().add(this,&LidarViewer::saveSelectionOKCallback);
-		saveSelectionDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		saveSelectionDialog->deleteOnCancel();
 		
 		/* Show the file selection dialog: */
 		Vrui::popupPrimaryWidget(saveSelectionDialog.releaseTarget());
@@ -1688,7 +1734,7 @@ void LidarViewer::loadPrimitivesCallback(Misc::CallbackData* cbData)
 		/* Create a file selection dialog to select a primitive file: */
 		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> loadPrimitivesDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Load Primitives...",dataDirectory,".dat"));
 		loadPrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::loadPrimitivesOKCallback);
-		loadPrimitivesDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		loadPrimitivesDialog->deleteOnCancel();
 		
 		/* Show the file selection dialog: */
 		Vrui::popupPrimaryWidget(loadPrimitivesDialog.releaseTarget());
@@ -1779,7 +1825,7 @@ void LidarViewer::savePrimitivesCallback(Misc::CallbackData* cbData)
 		/* Create a file selection dialog to select a primitive file: */
 		Misc::SelfDestructPointer<GLMotif::FileSelectionDialog> savePrimitivesDialog(new GLMotif::FileSelectionDialog(Vrui::getWidgetManager(),"Save Primitives...",dataDirectory,primitiveFileName.c_str(),".dat"));
 		savePrimitivesDialog->getOKCallbacks().add(this,&LidarViewer::savePrimitivesOKCallback);
-		savePrimitivesDialog->getCancelCallbacks().add(&GLMotif::PopupWindow::defaultCloseCallback);
+		savePrimitivesDialog->deleteOnCancel();
 		
 		/* Show the file selection dialog: */
 		Vrui::popupPrimaryWidget(savePrimitivesDialog.releaseTarget());
@@ -1851,17 +1897,27 @@ void LidarViewer::clearPrimitivesCallback(Misc::CallbackData* cbData)
 	lastPickedPrimitive=-1;
 	}
 
-void LidarViewer::showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
+void LidarViewer::showOctreeDialogCallback(Misc::CallbackData* cbData)
 	{
-	if(cbData->set)
+	if(!Vrui::getWidgetManager()->isManaged(octreeDialog))
+		{
+		/* Open the octree selection dialog: */
+		Vrui::popupPrimaryWidget(octreeDialog);
+		}
+	}
+
+void LidarViewer::octreeSelectionCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData,const int& octreeIndex)
+	{
+	/* Update the octree visibility flag: */
+	showOctrees[octreeIndex]=cbData->set;
+	}
+
+void LidarViewer::showRenderDialogCallback(Misc::CallbackData* cbData)
+	{
+	if(!Vrui::getWidgetManager()->isManaged(renderDialog))
 		{
 		/* Open the render dialog: */
 		Vrui::popupPrimaryWidget(renderDialog);
-		}
-	else
-		{
-		/* Close the render dialog: */
-		Vrui::popdownPrimaryWidget(renderDialog);
 		}
 	}
 
@@ -1949,22 +2005,12 @@ void LidarViewer::distanceExaggerationSliderCallback(GLMotif::TextFieldSlider::V
 	coordTransform->setTransform(newTransform);
 	}
 
-void LidarViewer::renderDialogCloseCallback(Misc::CallbackData* cbData)
+void LidarViewer::showInteractionDialogCallback(Misc::CallbackData* cbData)
 	{
-	showRenderDialogToggle->setToggle(false);
-	}
-
-void LidarViewer::showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
-	{
-	if(cbData->set)
+	if(!Vrui::getWidgetManager()->isManaged(interactionDialog))
 		{
 		/* Open the interaction dialog: */
 		Vrui::popupPrimaryWidget(interactionDialog);
-		}
-	else
-		{
-		/* Close the interaction dialog: */
-		Vrui::popdownPrimaryWidget(interactionDialog);
 		}
 	}
 
@@ -1996,11 +2042,6 @@ void LidarViewer::neighborhoodSizeSliderCallback(GLMotif::TextFieldSlider::Value
 	{
 	/* Get the new neighborhood size: */
 	neighborhoodSize=Scalar(cbData->value);
-	}
-
-void LidarViewer::interactionDialogCloseCallback(Misc::CallbackData* cbData)
-	{
-	showInteractionDialogToggle->setToggle(false);
 	}
 
 void LidarViewer::updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
