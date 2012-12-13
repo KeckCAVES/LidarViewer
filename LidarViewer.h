@@ -161,6 +161,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	std::vector<std::string> lidarFileNames; // Array of file names from with the octrees were loaded
 	int numOctrees; // Number of LiDAR octrees rendered in parallel
 	LidarOctree** octrees; // Array of LiDAR data representations rendered in parallel
+	bool* showOctrees; // Array of flags to disable individual LiDAR data representations
 	double offsets[3]; // Coordinate offsets that need to be added to points stored in the octree(s) to reconstruct original point positions
 	Vrui::AffineCoordinateTransform* coordTransform; // Pointer to a coordinate transformation to undo point offsets and handle vertical exaggeration
 	Scalar renderQuality; // The current rendering quality (adapted to achieve optimal frame rate)
@@ -196,8 +197,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	/* Vrui state: */
 	GLMotif::PopupMenu* mainMenu; // The program's main menu
 	GLMotif::RadioBox* mainMenuSelectorModes;
-	GLMotif::ToggleButton* showRenderDialogToggle;
-	GLMotif::ToggleButton* showInteractionDialogToggle;
+	GLMotif::PopupWindow* octreeDialog; // The dialog to select individual octrees
 	GLMotif::PopupWindow* renderDialog; // The rendering settings dialog
 	GLMotif::PopupWindow* interactionDialog; // The interaction settings dialog
 	GLMotif::RadioBox* interactionDialogSelectorModes;
@@ -210,6 +210,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 	GLMotif::Popup* createExtractionMenu(void);
 	GLMotif::Popup* createDialogMenu(void);
 	GLMotif::PopupMenu* createMainMenu(void);
+	GLMotif::PopupWindow* createOctreeDialog(void);
 	GLMotif::PopupWindow* createRenderDialog(void);
 	GLMotif::PopupWindow* createInteractionDialog(void);
 	static void treeUpdateNotificationCB(void* userData)
@@ -254,7 +255,9 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void savePrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallbackData* cbData);
 	void deleteSelectedPrimitivesCallback(Misc::CallbackData* cbData);
 	void clearPrimitivesCallback(Misc::CallbackData* cbData);
-	void showRenderDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void showOctreeDialogCallback(Misc::CallbackData* cbData);
+	void octreeSelectionCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData,const int& octreeIndex);
+	void showRenderDialogCallback(Misc::CallbackData* cbData);
 	void renderQualitySliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void fncWeightSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
@@ -266,12 +269,10 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void distanceExaggerationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
-	void renderDialogCloseCallback(Misc::CallbackData* cbData);
-	void showInteractionDialogCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void showInteractionDialogCallback(Misc::CallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void brushSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void neighborhoodSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
-	void interactionDialogCloseCallback(Misc::CallbackData* cbData);
 	void updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	};
 
