@@ -140,3 +140,6 @@ LiDAR Viewer 2.9:
   bounding boxes; will only read headers and not entire files.
 - Added file selection dialogs for "Save Selection..." and "Save
   Primitives..." menu entries.
+
+LiDAR Viewer 2.10:
+- Adapted to and bumped Vrui version requirement to 2.5-001.

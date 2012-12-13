@@ -1073,7 +1073,7 @@ std::string getLidarPartFileName(const char* lidarFileName,const char* partFileN
 
 }
 
-LidarOctree::LidarOctree(const char* lidarFileName,unsigned int sCacheSize,unsigned int sGlCacheSize)
+LidarOctree::LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlCacheSize)
 	:indexFile(getLidarPartFileName(lidarFileName,"Index").c_str()),
 	 pointsFile(getLidarPartFileName(lidarFileName,"Points").c_str()),
 	 normalsFile(0),
