@@ -1,7 +1,7 @@
 /***********************************************************************
 TempOctree - Class to store points in a temporary octree for out-of-core
 preprocessing of large point clouds.
-Copyright (c) 2007-2012 Oliver Kreylos
+Copyright (c) 2007-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -31,6 +31,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #include "LidarTypes.h"
 #include "Cube.h"
+#include "LidarFile.h"
 
 class TempOctree
 	{
@@ -79,6 +80,7 @@ class TempOctree
 	Threads::Thread writerThread; // Thread to write leaf nodes' point sets to the octree file in the background
 	
 	/* Private methods: */
+	void readLidarSubtree(Node& node,LidarFile::Offset childrenOffset,LidarFile& indexFile);
 	void* writerThreadMethod(void);
 	void createSubTree(Node& node);
 	LidarPoint* getPointsInCube(Node& node,const Cube& cube,LidarPoint* points);
@@ -86,6 +88,7 @@ class TempOctree
 	/* Constructors and destructors: */
 	public:
 	TempOctree(char* fileNameTemplate,unsigned int sMaxNumPointsPerNode,LidarPoint* points,size_t numPoints); // Creates a temporary octree for the given array of points; shuffles point array in the process
+	TempOctree(const char* lidarFileName); // Creates a TempOctree wrapper around an existing octree in .LiDAR format
 	~TempOctree(void);
 	
 	/* Methods: */

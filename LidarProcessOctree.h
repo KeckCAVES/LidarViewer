@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -28,6 +28,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 
 #if ALLOW_THREADING
 #include <Threads/Mutex.h>
+#include <Threads/Atomic.h>
 #endif
 #include <Math/Math.h>
 #include <Geometry/Vector.h>
@@ -48,10 +49,11 @@ class LidarProcessOctree
 		private:
 		#if ALLOW_THREADING
 		Threads::Mutex mutex; // Mutex to serialize changes to a node's state
+		Threads::Atomic<unsigned int> numProcessedChildren; // Counts the number of child nodes that have been completely processed in a multithreaded post-fix traversal
 		#endif
 		Node* parent; // Pointer to node's parent node; 0 for root
-		LidarFile::Offset childrenOffset; // Offset of the node's children in the octree file (0 if node is leaf node)
-		Node* children; // Pointer to an array of eight child nodes (0 if node is not subdivided)
+		LidarFile::Offset childrenOffset; // Offset of the node's children in the octree file (0 if node is a leaf)
+		Node* children; // Pointer to an array of eight child nodes (0 if node is a leaf or children are paged out)
 		Cube domain; // Node's domain
 		unsigned int numPoints; // Number of LiDAR points belonging to this node
 		Scalar detailSize; // Detail size of this node, for proper LOD computation

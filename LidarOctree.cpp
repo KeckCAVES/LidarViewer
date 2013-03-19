@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarOctree - Class to render multiresolution LiDAR point sets.
-Copyright (c) 2005-2011 Oliver Kreylos
+Copyright (c) 2005-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -38,6 +38,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLFrustum.h>
 
 #include "CoarseningHeap.h"
+#include "PointBasedLightingShader.h"
 
 /**********************************
 Methods of class LidarOctree::Node:
@@ -267,15 +268,14 @@ LidarOctree::DataItem::~DataItem(void)
 Methods of class LidarOctree:
 ****************************/
 
-void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree::Frustum& frustum,LidarOctree::DataItem* dataItem) const
+void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree::Frustum& frustum,PointBasedLightingShader& pbls,LidarOctree::DataItem* dataItem) const
 	{
 	/* Bail out if the node is empty: */
 	if(node->numPoints==0)
 		return;
 	
 	/* Check if this node intersects the view frustum: */
-	bool inside=true;
-	for(int plane=0;plane<6&&inside;++plane)
+	for(int plane=0;plane<6;++plane)
 		{
 		const Frustum::Plane::Vector& normal=frustum.getFrustumPlane(plane).getNormal();
 		
@@ -284,13 +284,10 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		for(int i=0;i<3;++i)
 			p[i]=normal[i]>Scalar(0)?node->domain.getMax()[i]:node->domain.getMin()[i];
 		
-		/* Check if the point is inside the view frustum: */
-		inside=!frustum.getFrustumPlane(plane).contains(p);
+		/* Bail out if the point is not inside the view frustum: */
+		if(frustum.getFrustumPlane(plane).contains(p))
+			return;
 		}
-	
-	/* Bail out if this node is not inside the view frustum: */
-	if(!inside)
-		return;
 	
 	/* Find the point inside the node that is closest to the focus+context center: */
 	Point nodeFncPoint=fncCenter;
@@ -368,7 +365,7 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			/* Render the node's children: */
 			// for(int i=7;i>=0;--i) // Back-to-front rendering
 			for(int i=0;i<8;++i) // Front-to-back rendering
-				renderSubTree(&node->children[i^childIndex],frustum,dataItem);
+				renderSubTree(&node->children[i^childIndex],frustum,pbls,dataItem);
 			
 			/* Done here... */
 			return;
@@ -510,6 +507,9 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 			}
 		dataItem->numBypassedPoints+=node->numPoints;
 		}
+	
+	/* Set this node's splat size: */
+	pbls.setSurfelSize((baseSurfelSize+node->detailSize)*surfelScale);
 	
 	/* Render this node's point set: */
 	if(vertexBufferObjectId!=0)
@@ -1083,7 +1083,7 @@ LidarOctree::LidarOctree(const char* lidarFileName,size_t sCacheSize,size_t sGlC
 	 numCachedNodes(0),
 	 renderPass(0U),
 	 treeUpdateFunction(0),treeUpdateFunctionArg(0),
-	 subdivisionRequestQueueLength(4),subdivisionRequestQueue(new SubdivisionRequest[subdivisionRequestQueueLength]),
+	 subdivisionRequestQueueLength(16),subdivisionRequestQueue(new SubdivisionRequest[subdivisionRequestQueueLength]),
 	 coarseningHeap(0)
 	{
 	/* Check if there is a normal vector file: */
@@ -1247,6 +1247,12 @@ void LidarOctree::setFocusAndContext(const Point& newFncCenter,Scalar newFncRadi
 	fncWeight=newFncWeight;
 	}
 
+void LidarOctree::setBaseSurfelSize(float newBaseSurfelSize,float newSurfelScale)
+	{
+	baseSurfelSize=newBaseSurfelSize;
+	surfelScale=newSurfelScale;
+	}
+
 void LidarOctree::startRenderPass(void)
 	{
 	{
@@ -1362,7 +1368,7 @@ void LidarOctree::startRenderPass(void)
 	// std::cout<<numCachedNodes<<"   ";
 	}
 
-void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextData& contextData) const
+void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,PointBasedLightingShader& pbls,GLContextData& contextData) const
 	{
 	/* Retrieve the context data item: */
 	DataItem* dataItem=contextData.retrieveDataItem<DataItem>(this);
@@ -1389,7 +1395,7 @@ void LidarOctree::glRenderAction(const LidarOctree::Frustum& frustum,GLContextDa
 	dataItem->numCacheBypasses=0;
 	dataItem->numRenderedPoints=0;
 	dataItem->numBypassedPoints=0;
-	renderSubTree(&root,frustum,dataItem);
+	renderSubTree(&root,frustum,pbls,dataItem);
 	
 	/* Reset OpenGL state: */
 	#if 0

@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2012 Oliver Kreylos
+Copyright (c) 2005-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -29,10 +29,12 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Geometry/Plane.h>
 #include <GL/gl.h>
 #include <GL/GLColor.h>
+#include <GL/GLMaterial.h>
 #include <GL/GLObject.h>
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
 #include <GLMotif/TextFieldSlider.h>
+#include <GLMotif/MaterialEditor.h>
 #include <GLMotif/FileSelectionDialog.h>
 #include <SceneGraph/TransformNode.h>
 #include <Vrui/LocatorTool.h>
@@ -168,7 +170,10 @@ class LidarViewer:public Vrui::Application,public GLObject
 	Scalar fncWeight; // Weight factor for focus+context LOD adjustment
 	float pointSize; // The pixel size used to render LiDAR points
 	bool pointBasedLighting; // Flag whether points are rendered with illumination
+	GLMaterial surfaceMaterial; // Surface material properties used during illuminated rendering
 	bool usePointColors; // Flag whether to use points' colors during illuminated rendering
+	bool useSplatting; // Flag whether to use point splats when illumination is enabled
+	double splatSize; // Size of point splats in model coordinate units
 	bool enableSun; // Flag whether to use a sun light source instead of all viewer's headlights
 	bool* viewerHeadlightStates; // Enable states of all viewers' headlights at the last time the sun light source was turned on
 	Vrui::Scalar sunAzimuth,sunElevation; // Azimuth and elevation angles of sun light source in degrees
@@ -176,6 +181,9 @@ class LidarViewer:public Vrui::Application,public GLObject
 	bool useTexturePlane; // Flag whether to use automatically generated texture coordinates to visualize point distance from a plane
 	GPlane texturePlane; // Plane equation of the texture-generating plane
 	double texturePlaneScale; // Scale factor for texture plane distances
+	#ifdef LIDARVIEWER_VISUALIZE_WATER
+	double texturePlaneOffset; // Additional offset for texture plane distances
+	#endif
 	double planeDistanceExaggeration; // Exaggeration factor for distances orthogonal to the texture plane
 	bool updateTree; // Flag if the tree is continuously updated
 	double lastFrameTime; // Application time of last frame; used to calculate render performance
@@ -263,12 +271,18 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void usePointColorsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void useSplattingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void splatSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableSunCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void sunAzimuthSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void sunElevationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableTexturePlaneCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void texturePlaneScaleSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	#ifdef LIDARVIEWER_VISUALIZE_WATER
+	void texturePlaneOffsetSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	#endif
 	void distanceExaggerationSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void materialCallback(GLMotif::MaterialEditor::ValueChangedCallbackData* cbData);
 	void showInteractionDialogCallback(Misc::CallbackData* cbData);
 	void overrideToolsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void brushSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
