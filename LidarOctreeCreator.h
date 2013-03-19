@@ -1,7 +1,7 @@
 /***********************************************************************
 LidarOctreeCreator - Class to create LiDAR octrees from point clouds
 using an out-of-core algorithm.
-Copyright (c) 2007-2012 Oliver Kreylos
+Copyright (c) 2007-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -110,6 +110,7 @@ class LidarOctreeCreator
 	Node root; // The octree's root node
 	
 	Threads::Queue<Node*> subsampleQueue; // Subsample request queue
+	unsigned int numSubsampleThreads; // Number of subsampling threads
 	Threads::Thread* subsampleThreads; // Array of subsampling threads
 	
 	std::string tempPointFileNameTemplate; // Template to generate temporary point file names
@@ -121,6 +122,13 @@ class LidarOctreeCreator
 	unsigned int totalNumNodes; // Total number of nodes in the octree
 	unsigned int maxLevel; // Number of the highest level in the octree
 	unsigned int maxNumPointsPerInteriorNode; // Actual maximum number of points in any node in the octree
+	
+	TempFile::Offset pointBufferMaxSize; // Maximum number of LiDAR points in each double-buffer half
+	TempFile::Offset fileSize; // Total number of LiDAR points in temporary point file
+	LidarPoint* pointBuffers[2]; // A double-buffer to read points from a temporary point file
+	TempFile::Offset pointBufferStarts[3]; // File offsets of the two double-buffer halves (plus end of second half) in units of LiDAR points
+	TempFile::Offset pointBufferSizes[2]; // Number of uncopied points in each double-buffer half
+	
 	unsigned int numWrittenNodes; // Number of nodes already written to the final octree files
 	unsigned int nextNumWrittenNodesUpdate; // Next number of written nodes at which to print a percentage update
 	
@@ -131,15 +139,16 @@ class LidarOctreeCreator
 	void createSubTree(Node& node,const Cube& nodeDomain);
 	void createSubTreeWithPoints(Node& node,const Cube& nodeDomain);
 	void calcFileOffsets(Node& node,unsigned int level,LidarFile::Offset& octreeFilePos,LidarFile::Offset& dataFilePos);
-	void writeSubtree(const Node& node,unsigned int level,TempFile& tempPointFile,LidarFile& octreeFile,LidarFile& pointsFile,LidarPoint* pointBuffer);
+	void writeIndexFileLevel(const Node& node,unsigned int level,LidarFile& octreeFile);
+	void writePointsFileLevel(const Node& node,unsigned int level,TempFile& tempPointFile,LidarFile& pointsFile);
 	
 	/* Constructors and destructors: */
 	public:
-	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,int numThreads,const TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
+	LidarOctreeCreator(size_t sMaxNumCachablePoints,unsigned int sMaxNumPointsPerNode,int sNumSubsampleThreads,const TempOctreeList& sTempOctrees,std::string sTempPointFileNameTemplate); // Creates point octree for the union of the given point sets and the given node parameters
 	~LidarOctreeCreator(void);
 	
 	/* Methods: */
-	void write(const char* lidarFileName); // Writes the octree structure and point data to the given LiDAR file directory
+	void write(size_t memorySize,const char* lidarFileName); // Writes the octree structure and point data to the given LiDAR file directory
 	};
 
 #endif

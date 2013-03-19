@@ -57,7 +57,7 @@ int main(int argc,char* argv[])
 	return 0;
 	}
 
-#elif 0
+#elif 1
 
 class PointCounter // Functor class to count the number of points stored in an octree file
 	{
@@ -358,7 +358,7 @@ int main(int argc,char* argv[])
 	{
 	LidarProcessOctree lpo(argv[1],512*1024*1024);
 	
-	#if 1
+	#if 0
 	Misc::Timer t;
 	{
 	// BinaryPointSaver bps(argv[2]);
@@ -368,7 +368,8 @@ int main(int argc,char* argv[])
 		offset[i]=lpo.getDomain().getCenter(i);
 	LasPointSaver lps(argv[2],scale,offset);
 	// PointCounter pc;
-	lpo.processPoints(lps);
+	Box box(Box::Point(2.04446e6,617053.0,-1000.0),Box::Point(2.04446e6+100.0,617053.0+100.0,1000.0));
+	lpo.processPointsInBox(box,lps);
 	// std::cout<<lps.getNumPoints()<<std::endl;
 	}
 	t.elapse();
@@ -382,8 +383,11 @@ int main(int argc,char* argv[])
 		box.max[i]=atof(argv[5+i]);
 		}
 	lpo.processPointsInBox(box,ps);
-	#else
+	#elif 0
 	PointCounter pc;
+	lpo.processPoints(pc);
+	std::cout<<pc.getNumPoints()<<std::endl;
+	#else
 	Scalar radius=Scalar(0.1);
 	PointDensityCalculator pdc(lpo,radius,4);
 	#if 0
