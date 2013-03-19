@@ -936,8 +936,6 @@ int main(int argc,char* argv[])
 	/* Parse the command line and load all input files: */
 	Misc::Timer loadTimer;
 	PointAccumulator pa;
-	pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
-	pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
 	for(int i=1;i<argc;++i)
 		{
 		if(argv[i][0]=='-')
@@ -970,10 +968,7 @@ int main(int argc,char* argv[])
 				{
 				++i;
 				if(i<argc)
-					{
 					memoryCacheSize=(unsigned int)(atoi(argv[i]));
-					pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
-					}
 				else
 					std::cerr<<"Dangling -ooc flag on command line"<<std::endl;
 				}
@@ -983,10 +978,7 @@ int main(int argc,char* argv[])
 				if(i<argc)
 					{
 					if(!havePoints)
-						{
 						tempOctreeFileNameTemplate=argv[i];
-						pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
-						}
 					else
 						std::cerr<<"Ignoring -to flag; must be specified before any input point sets are read"<<std::endl;
 					}
@@ -1223,6 +1215,13 @@ int main(int argc,char* argv[])
 					thisPointFileType=ILLEGAL;
 				}
 			
+			if(thisPointFileType!=ILLEGAL&&!havePoints)
+				{
+				/* Initialize the point accumulator: */
+				pa.setMemorySize(memoryCacheSize,tempOctreeMaxNumPointsPerNode);
+				pa.setTempOctreeFileNameTemplate(tempOctreeFileNameTemplate+"XXXXXX");
+				}
+			
 			/* Reset the point accumulator's spatial and color extents: */
 			pa.resetExtents();
 			
@@ -1345,7 +1344,7 @@ int main(int argc,char* argv[])
 	/* Check if an output file name was given: */
 	if(outputFileName==0)
 		{
-		std::cerr<<"Usage: "<<argv[0]<<"-o <output file name stem> [<option 1>] ... [<option n>] <input file spec 1> ... <input file spec n>"<<std::endl;
+		std::cerr<<"Usage: "<<argv[0]<<" -o <output file name stem> [<option 1>] ... [<option n>] <input file spec 1> ... <input file spec n>"<<std::endl;
 		std::cerr<<"Options: -np <max points per node>"<<std::endl;
 		std::cerr<<"         -nt <number of threads>"<<std::endl;
 		std::cerr<<"         -ooc <memory cache size in MB>"<<std::endl;
@@ -1389,7 +1388,7 @@ int main(int argc,char* argv[])
 	
 	/* Write the octree structure and data to the destination LiDAR file: */
 	Misc::Timer writeTimer;
-	tree.write(outputFileName);
+	tree.write(size_t(memoryCacheSize)*size_t(1024*1024),outputFileName);
 	writeTimer.elapse();
 	
 	/* Check if a point offset was defined: */

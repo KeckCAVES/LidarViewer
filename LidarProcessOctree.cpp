@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarProcessOctree - Class to process multiresolution LiDAR point sets.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2013 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -35,7 +35,11 @@ Methods of class LidarProcessOctree::Node:
 *****************************************/
 
 LidarProcessOctree::Node::Node(void)
-	:parent(0),children(0),points(0),
+	:
+	 #if ALLOW_THREADING
+	 numProcessedChildren(0),
+	 #endif
+	 parent(0),children(0),points(0),
 	 processCounter(0),
 	 lruPred(0),lruSucc(0)
 	{
