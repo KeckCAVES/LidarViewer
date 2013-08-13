@@ -449,7 +449,7 @@ void LidarGridder::writeBILFile(const char* imageFileName) const
 	fprintf(headerFile.getFilePtr(),"BANDROWBYTES %u\r\n",(unsigned int)(dem.getSize(0)*sizeof(float)));
 	fprintf(headerFile.getFilePtr(),"TOTALROWBYTES %u\r\n",(unsigned int)(dem.getSize(0)*sizeof(float)));
 	fprintf(headerFile.getFilePtr(),"ULXMAP %f\r\n",gridOrigin[0]);
-	fprintf(headerFile.getFilePtr(),"ULXYAP %f\r\n",gridOrigin[1]+double(gridSize[1]-1)*gridCellSize[1]);
+	fprintf(headerFile.getFilePtr(),"ULYMAP %f\r\n",gridOrigin[1]+double(gridSize[1]-1)*gridCellSize[1]);
 	fprintf(headerFile.getFilePtr(),"XDIM %f\r\n",gridCellSize[0]);
 	fprintf(headerFile.getFilePtr(),"YDIM %f\r\n",gridCellSize[1]);
 	}
