@@ -44,8 +44,13 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <Geometry/LinearUnit.h>
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
+#include <GL/GLMaterialTemplates.h>
 #include <GL/GLMaterial.h>
 #include <GL/GLContextData.h>
+#ifdef LIDARVIEWER_VISUALIZE_WATER
+#include <GL/Extensions/GLARBVertexShader.h>
+#include <GL/Extensions/GLARBFragmentShader.h>
+#endif
 #include <GL/GLValueCoders.h>
 #include <GL/GLGeometryWrappers.h>
 #include <GL/GLTransformationWrappers.h>
@@ -142,7 +147,7 @@ class ValueCoder<LidarViewer::SelectorLocator::SelectorMode>
 Methods of class LidarViewer::SelectorLocator:
 *********************************************/
 
-LidarViewer::SelectorLocator::SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,Misc::ConfigurationFileSection* cfg)
+LidarViewer::SelectorLocator::SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,const Misc::ConfigurationFileSection* cfg)
 	:Locator(sTool,sApplication),
 	 influenceRadius(application->brushSize),
 	 selectorMode(application->defaultSelectorMode),
@@ -241,6 +246,9 @@ Methods of class LidarViewer::DataItem:
 LidarViewer::DataItem::DataItem(GLContextData& contextData)
 	:influenceSphereDisplayListId(glGenLists(1)),
 	 pbls(contextData)
+	 #ifdef LIDARVIEWER_VISUALIZE_WATER
+	 ,waterShader(0)
+	 #endif
 	{
 	glGenTextures(1,&planeColorMapTextureId);
 	}
@@ -249,6 +257,10 @@ LidarViewer::DataItem::~DataItem(void)
 	{
 	glDeleteLists(influenceSphereDisplayListId,1);
 	glDeleteTextures(1,&planeColorMapTextureId);
+	
+	#ifdef LIDARVIEWER_VISUALIZE_WATER
+	glDeleteObjectARB(waterShader);
+	#endif
 	}
 
 /****************************
@@ -1216,6 +1228,15 @@ void LidarViewer::initContext(GLContextData& contextData) const
 	glBindTexture(GL_TEXTURE_1D,0);
 	
 	delete[] planeColorMap;
+	
+	#ifdef LIDARVIEWER_VISUALIZE_WATER
+	
+	/* Create a shader to texture the water surface: */
+	GLhandleARB waterVertexShader=glCompileVertexShaderFromFile("WaterShader.vs");
+	GLhandleARB waterFragmentShader=glCompileFragmentShaderFromFile("WaterShader.fs");
+	dataItem->waterShader=glLinkShader(waterVertexShader,waterFragmentShader);
+	
+	#endif
 	}
 
 void LidarViewer::toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackData* cbData)
@@ -1441,6 +1462,52 @@ void LidarViewer::display(GLContextData& contextData) const
 			glDisable(GL_TEXTURE_GEN_S);
 			}
 		}
+	
+	#ifdef LIDARVIEWER_VISUALIZE_WATER
+	#if 0
+	
+	if(useTexturePlane)
+		{
+		/* Draw the texture plane itself as a transparent quad: */
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+		glDepthMask(GL_FALSE);
+		glDisable(GL_CULL_FACE);
+		
+		GPlane::Point center=texturePlane.project(octrees[0]->getDomainCenter());
+		GPlane::Vector z=texturePlane.getNormal();
+		z.normalize();
+		center+=z*texturePlaneOffset;
+		GPlane::Vector x=Geometry::normal(texturePlane.getNormal());
+		x*=octrees[0]->getDomainRadius()/Geometry::mag(x);
+		GPlane::Vector y=Geometry::cross(texturePlane.getNormal(),x);
+		y*=octrees[0]->getDomainRadius()/Geometry::mag(x);
+		
+		glUseProgramObjectARB(dataItem->waterShader);
+		
+		glBegin(GL_QUADS);
+		glNormal(texturePlane.getNormal());
+		glTexCoord2f(-8192.0f,-8192.0f);
+		glVertex(center-x-y);
+		glTexCoord2f(8192.0f,-8192.0f);
+		glVertex(center+x-y);
+		glTexCoord2f(8192.0f,8192.0f);
+		glVertex(center+x+y);
+		glTexCoord2f(-8192.0f,8192.0f);
+		glVertex(center-x+y);
+		glEnd();
+		
+		glUseProgramObjectARB(0);
+		
+		glEnable(GL_CULL_FACE);
+		
+		glDepthMask(GL_TRUE);
+		glDisable(GL_BLEND);
+		}
+	
+	#endif
+	#endif
+	
 	glPopAttrib();
 	
 	glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_TEXTURE_BIT);
@@ -1889,6 +1956,8 @@ void LidarViewer::loadPrimitivesOKCallback(GLMotif::FileSelectionDialog::OKCallb
 					
 					/* Update the texture generation plane: */
 					texturePlane=newPlane->getPlane();
+					if(texturePlane.getNormal()[2]<0.0)
+						texturePlane=GPlane(-texturePlane.getNormal(),-texturePlane.getOffset());
 					texturePlane.normalize();
 					break;
 					}
