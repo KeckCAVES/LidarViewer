@@ -154,3 +154,6 @@ LiDAR Viewer 2.11:
   a scene graph showing the names and bounding boxes of all LAS files
   given on the command line.
 - Added LidarSpotRemover utility.
+
+LiDAR Viewer 2.12:
+- Bumped Vrui version requirement to 3.0-001.

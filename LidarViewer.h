@@ -31,6 +31,9 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLColor.h>
 #include <GL/GLMaterial.h>
 #include <GL/GLObject.h>
+#ifdef LIDARVIEWER_VISUALIZE_WATER
+#include <GL/Extensions/GLARBShaderObjects.h>
+#endif
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
 #include <GLMotif/TextFieldSlider.h>
@@ -122,7 +125,7 @@ class LidarViewer:public Vrui::Application,public GLObject
 		
 		/* Constructors and destructors: */
 		public:
-		SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,Misc::ConfigurationFileSection* cfg =0);
+		SelectorLocator(Vrui::LocatorTool* sTool,LidarViewer* sApplication,const Misc::ConfigurationFileSection* cfg =0);
 		virtual ~SelectorLocator(void);
 		
 		/* Methods from Vrui::LocatorToolAdapter: */
@@ -148,6 +151,9 @@ class LidarViewer:public Vrui::Application,public GLObject
 		GLuint influenceSphereDisplayListId; // ID of display list to render transparent spheres
 		GLuint planeColorMapTextureId; // Texture object ID of texture plane color map
 		PointBasedLightingShader pbls; // Shader for point-based lighting
+		#ifdef LIDARVIEWER_VISUALIZE_WATER
+		GLhandleARB waterShader; // Shader to generate a water-like texture on-the-fly
+		#endif
 		
 		/* Constructors and destructors: */
 		DataItem(GLContextData& contextData);
