@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2013 Oliver Kreylos
+Copyright (c) 2005-2015 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -37,6 +37,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GLMotif/RadioBox.h>
 #include <GLMotif/ToggleButton.h>
 #include <GLMotif/TextFieldSlider.h>
+#include <GLMotif/HSVColorSelector.h>
 #include <GLMotif/MaterialEditor.h>
 #include <GLMotif/FileSelectionDialog.h>
 #include <SceneGraph/TransformNode.h>
@@ -55,7 +56,6 @@ namespace Cluster {
 class MulticastPipe;
 }
 namespace GLMotif {
-class Popup;
 class PopupMenu;
 class PopupWindow;
 }
@@ -219,10 +219,10 @@ class LidarViewer:public Vrui::Application,public GLObject
 	IO::DirectoryPtr dataDirectory; // Last directory from/to which selections or primitives were loaded/saved
 	
 	/* Private methods: */
-	GLMotif::Popup* createSelectorModesMenu(void);
-	GLMotif::Popup* createSelectionMenu(void);
-	GLMotif::Popup* createExtractionMenu(void);
-	GLMotif::Popup* createDialogMenu(void);
+	GLMotif::PopupMenu* createSelectorModesMenu(void);
+	GLMotif::PopupMenu* createSelectionMenu(void);
+	GLMotif::PopupMenu* createExtractionMenu(void);
+	GLMotif::PopupMenu* createDialogMenu(void);
 	GLMotif::PopupMenu* createMainMenu(void);
 	GLMotif::PopupWindow* createOctreeDialog(void);
 	GLMotif::PopupWindow* createRenderDialog(void);
@@ -241,17 +241,19 @@ class LidarViewer:public Vrui::Application,public GLObject
 	
 	/* Constructors and destructors: */
 	public:
-	LidarViewer(int& argc,char**& argv,char**& appDefaults);
+	LidarViewer(int& argc,char**& argv);
 	virtual ~LidarViewer(void);
 	
-	/* Methods: */
+	/* Methods from Vrui::Application: */
 	virtual void initContext(GLContextData& contextData) const;
 	virtual void toolCreationCallback(Vrui::ToolManager::ToolCreationCallbackData* cbData);
 	virtual void toolDestructionCallback(Vrui::ToolManager::ToolDestructionCallbackData* cbData);
 	virtual void frame(void);
 	virtual void display(GLContextData& contextData) const;
+	virtual void resetNavigation(void);
+	
+	/* New methods: */
 	void alignSurfaceFrame(Vrui::SurfaceNavigationTool::AlignmentData& alignmentData);
-	void centerDisplayCallback(Misc::CallbackData* cbData);
 	void changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData);
 	void classifySelectionCallback(Misc::CallbackData* cbData);
 	void saveSelectionCallback(Misc::CallbackData* cbData);
@@ -275,6 +277,8 @@ class LidarViewer:public Vrui::Application,public GLObject
 	void renderQualitySliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void fncWeightSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
+	void backgroundColorSelectorCallback(GLMotif::HSVColorSelector::ValueChangedCallbackData* cbData);
+	void drawDistanceSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void usePointColorsCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
 	void useSplattingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);

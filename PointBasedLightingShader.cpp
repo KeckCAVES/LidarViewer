@@ -52,7 +52,7 @@ void PointBasedLightingShader::compileShader(void)
 	if(usePlaneDistance)
 		{
 		/* Create the plane distance mapping uniforms: */
-		vertexShaderMain+="\
+		vertexShaderDefines+="\
 			uniform vec4 planeDistancePlane;\n\
 			uniform sampler1D planeDistanceMap;\n\
 			\n";
@@ -173,13 +173,16 @@ void PointBasedLightingShader::compileShader(void)
 	/* Finish the main vertex shader: */
 	if(useSplatting)
 		{
+		/* Create the splatting varyings: */
 		vertexShaderDefines+="\
 			varying vec3 normal;\n\
+			varying float splatSize;\n\
 			\n";
 		
 		vertexShaderMain+="\
 				/* Pass normal vector to geometry shader: */\n\
 				normal=normalEc;\n\
+				splatSize=length(gl_Normal);\n\
 				\n\
 				/* Pass eye coordinate vertex position to geometry shader: */\n\
 				gl_Position=vertexEc;\n\
@@ -214,6 +217,7 @@ void PointBasedLightingShader::compileShader(void)
 			uniform float surfelSize;\n\
 			\n\
 			varying in vec3 normal[];\n\
+			varying in float splatSize[];\n\
 			\n\
 			void main()\n\
 				{\n\
@@ -225,7 +229,7 @@ void PointBasedLightingShader::compileShader(void)
 					x=normalize(vec3(normal[0].z,0.0,-normal[0].x));\n\
 				else\n\
 					x=normalize(vec3(normal[0].y,-normal[0].x,0.0));\n\
-				x*=surfelSize*1.41421356;\n\
+				x*=splatSize[0]*surfelSize*1.41421356;\n\
 				vec3 y=cross(normal[0],x);\n\
 				\n\
 				/* Emit the quad's four vertices: */\n\

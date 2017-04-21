@@ -1,6 +1,6 @@
 ========================================================================
-README for LiDAR Viewer version 2.12
-Copyright (c) 2004-2013 Oliver Kreylos
+README for LiDAR Viewer version 2.13
+Copyright (c) 2004-2017 Oliver Kreylos
 ========================================================================
 
 Overview
@@ -38,7 +38,7 @@ rates.
 Requirements
 ============
 
-LiDAR Viewer requires Vrui version 3.0 build 001 or newer.
+LiDAR Viewer requires Vrui version 4.2 build 006 or newer.
 
 Installation Guide
 ==================
@@ -65,8 +65,8 @@ accounts.
 2. Change into LiDAR Viewer base directory:
    > cd LidarViewer-<version>
 
-3. If the Vrui version installed in step 0 was not 3.0, or Vrui's
-   installation directory was changed from the default of ~/Vrui-3.0,
+3. If the Vrui version installed in step 0 was not 4.2, or Vrui's
+   installation directory was changed from the default of /usr/local,
    adapt the makefile using a text editor. Change the value of
    VRUI_MAKEDIR close to the beginning of the file as follows:
    VRUI_MAKEDIR := <Vrui install dir>/share/make

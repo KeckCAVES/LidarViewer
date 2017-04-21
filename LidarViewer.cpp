@@ -1,6 +1,6 @@
 /***********************************************************************
 LidarViewer - Viewer program for multiresolution LiDAR data.
-Copyright (c) 2005-2013 Oliver Kreylos
+Copyright (c) 2005-2015 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -60,18 +60,16 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <GL/GLPrintError.h>
 #include <GLMotif/StyleSheet.h>
 #include <GLMotif/WidgetManager.h>
-#include <GLMotif/Margin.h>
-#include <GLMotif/Separator.h>
-#include <GLMotif/Button.h>
-#include <GLMotif/CascadeButton.h>
-#include <GLMotif/Label.h>
+#include <GLMotif/PopupMenu.h>
+#include <GLMotif/PopupWindow.h>
 #include <GLMotif/RowColumn.h>
 #include <GLMotif/Menu.h>
-#include <GLMotif/SubMenu.h>
-#include <GLMotif/Popup.h>
-#include <GLMotif/PopupMenu.h>
+#include <GLMotif/Margin.h>
 #include <GLMotif/Pager.h>
-#include <GLMotif/PopupWindow.h>
+#include <GLMotif/Separator.h>
+#include <GLMotif/Label.h>
+#include <GLMotif/Button.h>
+#include <GLMotif/CascadeButton.h>
 #include <SceneGraph/NodeCreator.h>
 #include <SceneGraph/VRMLFile.h>
 #include <SceneGraph/TransformNode.h>
@@ -267,11 +265,13 @@ LidarViewer::DataItem::~DataItem(void)
 Methods of class LidarViewer:
 ****************************/
 
-GLMotif::Popup* LidarViewer::createSelectorModesMenu(void)
+GLMotif::PopupMenu* LidarViewer::createSelectorModesMenu(void)
 	{
-	GLMotif::Popup* selectorModesMenuPopup=new GLMotif::Popup("SelectorModesMenuPopup",Vrui::getWidgetManager());
+	GLMotif::PopupMenu* selectorModesMenuPopup=new GLMotif::PopupMenu("SelectorModesMenuPopup",Vrui::getWidgetManager());
 	
-	GLMotif::RadioBox* selectorModes=new GLMotif::RadioBox("SelectorModes",selectorModesMenuPopup,false);
+	GLMotif::Menu* selectorModesMenu=new GLMotif::Menu("SelectorModesMenu",selectorModesMenuPopup,false);
+	
+	GLMotif::RadioBox* selectorModes=new GLMotif::RadioBox("SelectorModes",selectorModesMenu,false);
 	selectorModes->setSelectionMode(GLMotif::RadioBox::ALWAYS_ONE);
 	
 	selectorModes->addToggle("Add");
@@ -292,14 +292,16 @@ GLMotif::Popup* LidarViewer::createSelectorModesMenu(void)
 	
 	mainMenuSelectorModes=selectorModes;
 	
+	selectorModesMenu->manageChild();
+	
 	return selectorModesMenuPopup;
 	}
 
-GLMotif::Popup* LidarViewer::createSelectionMenu(void)
+GLMotif::PopupMenu* LidarViewer::createSelectionMenu(void)
 	{
-	GLMotif::Popup* selectionMenuPopup=new GLMotif::Popup("SelectionMenuPopup",Vrui::getWidgetManager());
+	GLMotif::PopupMenu* selectionMenuPopup=new GLMotif::PopupMenu("SelectionMenuPopup",Vrui::getWidgetManager());
 	
-	GLMotif::SubMenu* selectionMenu=new GLMotif::SubMenu("SelectionMenu",selectionMenuPopup,false);
+	GLMotif::Menu* selectionMenu=new GLMotif::Menu("SelectionMenu",selectionMenuPopup,false);
 	
 	GLMotif::Button* classifySelectionButton=new GLMotif::Button("ClassifySelectionButton",selectionMenu,"Classify Selection");
 	classifySelectionButton->getSelectCallbacks().add(this,&LidarViewer::classifySelectionCallback);
@@ -317,11 +319,11 @@ GLMotif::Popup* LidarViewer::createSelectionMenu(void)
 	return selectionMenuPopup;
 	}
 
-GLMotif::Popup* LidarViewer::createExtractionMenu(void)
+GLMotif::PopupMenu* LidarViewer::createExtractionMenu(void)
 	{
-	GLMotif::Popup* extractionMenuPopup=new GLMotif::Popup("ExtractionMenuPopup",Vrui::getWidgetManager());
+	GLMotif::PopupMenu* extractionMenuPopup=new GLMotif::PopupMenu("ExtractionMenuPopup",Vrui::getWidgetManager());
 	
-	GLMotif::SubMenu* extractionMenu=new GLMotif::SubMenu("ExtractionMenu",extractionMenuPopup,false);
+	GLMotif::Menu* extractionMenu=new GLMotif::Menu("ExtractionMenu",extractionMenuPopup,false);
 	
 	GLMotif::Button* extractPlaneButton=new GLMotif::Button("ExtractPlaneButton",extractionMenu,"Extract Plane");
 	extractPlaneButton->getSelectCallbacks().add(this,&LidarViewer::extractPlaneCallback);
@@ -360,11 +362,11 @@ GLMotif::Popup* LidarViewer::createExtractionMenu(void)
 	return extractionMenuPopup;
 	}
 
-GLMotif::Popup* LidarViewer::createDialogMenu(void)
+GLMotif::PopupMenu* LidarViewer::createDialogMenu(void)
 	{
-	GLMotif::Popup* dialogMenuPopup=new GLMotif::Popup("DialogMenuPopup",Vrui::getWidgetManager());
+	GLMotif::PopupMenu* dialogMenuPopup=new GLMotif::PopupMenu("DialogMenuPopup",Vrui::getWidgetManager());
 	
-	GLMotif::SubMenu* dialogMenu=new GLMotif::SubMenu("DialogMenu",dialogMenuPopup,false);
+	GLMotif::Menu* dialogMenu=new GLMotif::Menu("DialogMenu",dialogMenuPopup,false);
 	
 	if(numOctrees>1)
 		{
@@ -398,9 +400,6 @@ GLMotif::PopupMenu* LidarViewer::createMainMenu(void)
 	
 	GLMotif::CascadeButton* extractionCascade=new GLMotif::CascadeButton("ExtractionCascade",mainMenu,"Primitives");
 	extractionCascade->setPopup(createExtractionMenu());
-	
-	GLMotif::Button* centerDisplayButton=new GLMotif::Button("CenterDisplayButton",mainMenu,"Center Display");
-	centerDisplayButton->getSelectCallbacks().add(this,&LidarViewer::centerDisplayCallback);
 	
 	GLMotif::CascadeButton* dialogCascade=new GLMotif::CascadeButton("DialogCascade",mainMenu,"Dialogs");
 	dialogCascade->setPopup(createDialogMenu());
@@ -503,6 +502,44 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 	
 	lodBox->manageChild();
 	
+	/* Create a page with environment settings: */
+	renderPager->setNextPageName("Environment");
+	
+	GLMotif::RowColumn* environmentBox=new GLMotif::RowColumn("EnvironmentBox",renderPager,false);
+	environmentBox->setOrientation(GLMotif::RowColumn::VERTICAL);
+	environmentBox->setPacking(GLMotif::RowColumn::PACK_TIGHT);
+	environmentBox->setNumMinorWidgets(2);
+	
+	/* Create a color selector to change the environment's background color: */
+	new GLMotif::Label("BackgroundColorLabel",environmentBox,"Background Color");
+	
+	GLMotif::Margin* backgroundColorMargin=new GLMotif::Margin("BackgroundColorMargin",environmentBox,false);
+	backgroundColorMargin->setAlignment(GLMotif::Alignment(GLMotif::Alignment::HCENTER));
+	
+	GLMotif::HSVColorSelector* backgroundColorSelector=new GLMotif::HSVColorSelector("BackgroundColorSelector",backgroundColorMargin);
+	backgroundColorSelector->setCurrentColor(Vrui::getBackgroundColor());
+	backgroundColorSelector->getValueChangedCallbacks().add(this,&LidarViewer::backgroundColorSelectorCallback);
+	
+	backgroundColorMargin->manageChild();
+	
+	/* Create a slider/textfield combo to change the backplane distance: */
+	new GLMotif::Label("DrawDistanceLabel",environmentBox,"Draw Distance");
+	
+	GLMotif::TextFieldSlider* drawDistanceSlider=new GLMotif::TextFieldSlider("DrawDistanceSlider",environmentBox,10,ss.fontHeight*10.0f);
+	drawDistanceSlider->getTextField()->setFloatFormat(GLMotif::TextField::SMART);
+	drawDistanceSlider->getTextField()->setFieldWidth(8);
+	drawDistanceSlider->getTextField()->setPrecision(8);
+	drawDistanceSlider->setSliderMapping(GLMotif::TextFieldSlider::EXP10);
+	double minDrawDist=Math::pow(10.0,Math::ceil(Math::log10(double(Vrui::getFrontplaneDist())*2.0/double(Vrui::getMeterFactor()))));
+	drawDistanceSlider->setValueRange(minDrawDist,1000000.0,0.1);
+	drawDistanceSlider->setValue(Vrui::getBackplaneDist()/Vrui::getMeterFactor());
+	drawDistanceSlider->getValueChangedCallbacks().add(this,&LidarViewer::drawDistanceSliderCallback);
+	
+	/* Create a drop-down box to change the fog type: */
+	new GLMotif::Label("FogTypeLabel",environmentBox,"Fog Type");
+	
+	environmentBox->manageChild();
+	
 	/* Check if any of the octrees have normal vectors: */
 	bool haveNormalVectors=false;
 	for(int i=0;i<numOctrees;++i)
@@ -595,7 +632,7 @@ GLMotif::PopupWindow* LidarViewer::createRenderDialog(void)
 		sunElevationSlider->getTextField()->setFloatFormat(GLMotif::TextField::FIXED);
 		sunElevationSlider->getTextField()->setFieldWidth(2);
 		sunElevationSlider->getTextField()->setPrecision(0);
-		sunElevationSlider->setValueRange(0.0,90.0,1.0);
+		sunElevationSlider->setValueRange(-90.0,90.0,1.0);
 		sunElevationSlider->setValue(double(sunElevation));
 		sunElevationSlider->getValueChangedCallbacks().add(this,&LidarViewer::sunElevationSliderCallback);
 		
@@ -892,8 +929,8 @@ void LidarViewer::setEnableSun(bool newEnableSun)
 		}
 	}
 
-LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
-	:Vrui::Application(argc,argv,appDefaults),
+LidarViewer::LidarViewer(int& argc,char**& argv)
+	:Vrui::Application(argc,argv),
 	 numOctrees(0),octrees(0),showOctrees(0),
 	 coordTransform(0),
 	 renderQuality(0),fncWeight(0.5),
@@ -1115,9 +1152,6 @@ LidarViewer::LidarViewer(int& argc,char**& argv,char**& appDefaults)
 		octreeDialog=createOctreeDialog();
 	renderDialog=createRenderDialog();
 	interactionDialog=createInteractionDialog();
-	
-	/* Initialize the navigation transformation: */
-	centerDisplayCallback(0);
 	
 	/* Register the custom tool classes with the Vrui tool manager: */
 	LidarToolFactory* lidarToolFactory=new LidarToolFactory(*Vrui::getToolManager());
@@ -1345,6 +1379,15 @@ void LidarViewer::display(GLContextData& contextData) const
 	
 	/* Set up basic OpenGL state: */
 	glPushAttrib(GL_ENABLE_BIT|GL_LIGHTING_BIT|GL_LINE_BIT|GL_POINT_BIT|GL_TEXTURE_BIT);
+	
+	/* Enable fog: */
+	glEnable(GL_FOG);
+	glFogi(GL_FOG_DISTANCE_MODE_NV,GL_EYE_RADIAL_NV);
+	glFogi(GL_FOG_MODE,GL_LINEAR);
+	glFogf(GL_FOG_START,0.0f);
+	glFogf(GL_FOG_END,GLfloat(Vrui::getBackplaneDist()));
+	glFogfv(GL_FOG_COLOR,Vrui::getBackgroundColor().getRgba());
+	
 	if(pointBasedLighting&&octrees[0]->hasNormalVectors())
 		{
 		if(useTexturePlane)
@@ -1530,6 +1573,12 @@ void LidarViewer::display(GLContextData& contextData) const
 		(*pIt)->glRenderAction(contextData);
 	}
 
+void LidarViewer::resetNavigation(void)
+	{
+	/* Initialize the navigation transformation: */
+	Vrui::setNavigationTransformation(octrees[0]->getDomainCenter(),octrees[0]->getDomainRadius(),Vrui::Vector(0,0,1));
+	}
+
 void LidarViewer::alignSurfaceFrame(Vrui::SurfaceNavigationTool::AlignmentData& alignmentData)
 	{
 	/* Get the frame's base point: */
@@ -1565,12 +1614,6 @@ void LidarViewer::alignSurfaceFrame(Vrui::SurfaceNavigationTool::AlignmentData& 
 	
 	/* Align the frame with the terrain's x and y directions: */
 	alignmentData.surfaceFrame=Vrui::NavTransform(base-Vrui::Point::origin,Vrui::Rotation::identity,alignmentData.surfaceFrame.getScaling());
-	}
-
-void LidarViewer::centerDisplayCallback(Misc::CallbackData* cbData)
-	{
-	/* Initialize the navigation transformation: */
-	Vrui::setNavigationTransformation(octrees[0]->getDomainCenter(),octrees[0]->getDomainRadius(),Vrui::Vector(0,0,1));
 	}
 
 void LidarViewer::changeSelectorModeCallback(GLMotif::RadioBox::ValueChangedCallbackData* cbData)
@@ -1686,6 +1729,7 @@ void LidarViewer::saveSelectionOKCallback(GLMotif::FileSelectionDialog::OKCallba
 				{
 				/* Send success flag to the slaves: */
 				Vrui::getMainPipe()->write<unsigned char>(0);
+				Vrui::getMainPipe()->flush();
 				}
 			
 			success=true;
@@ -1697,6 +1741,7 @@ void LidarViewer::saveSelectionOKCallback(GLMotif::FileSelectionDialog::OKCallba
 				/* Send error flag and error message to the slaves: */
 				Vrui::getMainPipe()->write<unsigned char>(1);
 				Misc::writeCString(err.what(),*Vrui::getMainPipe());
+				Vrui::getMainPipe()->flush();
 				}
 			
 			/* Show an error message: */
@@ -2134,6 +2179,18 @@ void LidarViewer::pointSizeSliderCallback(GLMotif::TextFieldSlider::ValueChanged
 	pointSize=cbData->value;
 	}
 
+void LidarViewer::backgroundColorSelectorCallback(GLMotif::HSVColorSelector::ValueChangedCallbackData* cbData)
+	{
+	/* Set Vrui's background color: */
+	Vrui::setBackgroundColor(cbData->newColor);
+	}
+
+void LidarViewer::drawDistanceSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData)
+	{
+	/* Set Vrui's backplane distance: */
+	Vrui::setBackplaneDist(cbData->value*Vrui::getMeterFactor());
+	}
+
 void LidarViewer::enableLightingCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData)
 	{
 	pointBasedLighting=cbData->set;
@@ -2267,19 +2324,4 @@ void LidarViewer::updateTreeCallback(GLMotif::ToggleButton::ValueChangedCallback
 	updateTree=cbData->set;
 	}
 
-int main(int argc,char* argv[])
-	{
-	try
-		{
-		char** appDefaults=0;
-		LidarViewer lv(argc,argv,appDefaults);
-		lv.run();
-		return 0;
-		}
-	catch(std::runtime_error err)
-		{
-		std::cerr<<"Caught exception "<<err.what()<<std::endl;
-		return 1;
-		}
-	}
-
+VRUI_APPLICATION_RUN(LidarViewer)

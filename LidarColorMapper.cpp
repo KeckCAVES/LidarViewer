@@ -483,6 +483,39 @@ void NodeColorSampler::operator()(LidarProcessOctree::Node& node,unsigned int no
 				Geometry::Point<double,3> pos;
 				for(int j=0;j<3;++j)
 					pos[j]=double(node[i][j]+lpo.getOffset()[j]);
+				
+				// Evil hack afoot!
+				if(pos[2]<0.0)
+					{
+					if(pos[2]>=-525.0)
+						{
+						colorBuffer[i][0]=Color::Scalar((pos[2]+525.0)*240.0/525.0);
+						colorBuffer[i][1]=Color::Scalar((pos[2]+525.0)*95.0/525.0+160.0);
+						colorBuffer[i][2]=Color::Scalar(255);
+						}
+					else if(pos[2]>=-1050.0)
+						{
+						colorBuffer[i][0]=Color::Scalar(0);
+						colorBuffer[i][1]=Color::Scalar((pos[2]+1050.0)*160.0/525.0);
+						colorBuffer[i][2]=Color::Scalar(255);
+						}
+					else if(pos[2]>=-1575.0)
+						{
+						colorBuffer[i][0]=Color::Scalar(0);
+						colorBuffer[i][1]=Color::Scalar(0);
+						colorBuffer[i][2]=Color::Scalar((pos[2]+1575.0)*191.0/525.0+64.0);
+						}
+					else
+						{
+						colorBuffer[i][0]=Color::Scalar(0);
+						colorBuffer[i][1]=Color::Scalar(0);
+						colorBuffer[i][2]=Color::Scalar(64);
+						}
+					colorBuffer[i][3]=Color::Scalar(255);
+					
+					++numAssignedColors;
+					}
+				else
 				for(std::vector<Image2D*>::iterator iIt=nodeImages.begin();iIt!=nodeImages.end();++iIt)
 					{
 					Image2D::SampleResult sr=(*iIt)->getColor(Image2D::Point(pos.getComponents()));

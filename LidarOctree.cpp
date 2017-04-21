@@ -27,6 +27,7 @@ Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 #include <iostream>
 #include <iomanip>
 #include <Misc/ThrowStdErr.h>
+#include <Misc/SelfDestructArray.h>
 #include <Geometry/Ray.h>
 #include <Geometry/Box.h>
 #include <GL/gl.h>
@@ -509,7 +510,11 @@ void LidarOctree::renderSubTree(const LidarOctree::Node* node,const LidarOctree:
 		}
 	
 	/* Set this node's splat size: */
-	pbls.setSurfelSize((baseSurfelSize+node->detailSize)*surfelScale);
+	#if 0
+	pbls.setSurfelSize((baseSurfelSize+node->detailSize)*surfelScale); // For old fixed-size surfels
+	#else
+	pbls.setSurfelSize(baseSurfelSize*surfelScale); // For new adaptive surfels
+	#endif
 	
 	/* Render this node's point set: */
 	if(vertexBufferObjectId!=0)
@@ -805,99 +810,101 @@ void LidarOctree::loadNodePoints(LidarOctree::Node* node)
 	if(node->haveNormals)
 		{
 		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
-		NVertex* points=new NVertex[maxNumPointsPerNode];
-		node->points=points;
+		Misc::SelfDestructArray<NVertex> points(maxNumPointsPerNode);
 		
 		/* Load the node's points into a temporary point buffer: */
-		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
+		Misc::SelfDestructArray<LidarPoint> pointsBuffer(maxNumPointsPerNode);
 		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
-		pointsFile.read(pointsBuffer,node->numPoints);
-		Vector* normalsBuffer=new Vector[maxNumPointsPerNode];
+		pointsFile.read(pointsBuffer.getArray(),node->numPoints);
+		Misc::SelfDestructArray<Vector> normalsBuffer(maxNumPointsPerNode);
 		normalsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+normalsRecordSize*node->dataOffset);
-		normalsFile->read(normalsBuffer,node->numPoints);
+		normalsFile->read(normalsBuffer.getArray(),node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
-			Color* colorsBuffer=new Color[maxNumPointsPerNode];
+			Misc::SelfDestructArray<Color> colorsBuffer(maxNumPointsPerNode);
 			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
-			colorsFile->read(colorsBuffer,node->numPoints);
+			colorsFile->read(colorsBuffer.getArray(),node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
-			for(unsigned int i=0;i<node->numPoints;++i)
+			LidarPoint* pPtr=pointsBuffer.getArray();
+			Color* cPtr=colorsBuffer.getArray();
+			for(unsigned int i=0;i<node->numPoints;++i,++pPtr,++cPtr)
 				for(int j=0;j<4;++j)
-					pointsBuffer[i].value[j]=colorsBuffer[i][j];
-			
-			/* Clean up: */
-			delete[] colorsBuffer;
+					pPtr->value[j]=(*cPtr)[j];
 			}
 		
 		/* Convert the LiDAR points to render points: */
-		for(unsigned int i=0;i<node->numPoints;++i)
+		NVertex* npPtr=points.getArray();
+		const LidarPoint* pPtr=pointsBuffer.getArray();
+		const Vector* nPtr=normalsBuffer.getArray();
+		for(unsigned int i=0;i<node->numPoints;++i,++npPtr,++pPtr,++nPtr)
 			{
 			/* Copy the point color: */
 			for(int j=0;j<4;++j)
-				points[i].color[j]=pointsBuffer[i].value[j];
+				npPtr->color[j]=pPtr->value[j];
 			
 			/* Copy the normal vector: */
-			points[i].normal=normalsBuffer[i];
+			npPtr->normal=*nPtr;
 			
 			/* Copy the point position: */
-			points[i].position=pointsBuffer[i];
+			npPtr->position=*pPtr;
+			
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			points[i].position-=pointOffset;
+			npPtr->position-=pointOffset;
 			#endif
 			}
 		
-		/* Clean up: */
-		delete[] pointsBuffer;
-		delete[] normalsBuffer;
+		/* Store the new point array in the node: */
+		node->points=points.releaseTarget();
 		}
 	else
 		{
 		/* Create the node's point array (always allocate the maximum size to prevent memory fragmentation): */
-		Vertex* points=new Vertex[maxNumPointsPerNode];
-		node->points=points;
+		Misc::SelfDestructArray<Vertex> points(maxNumPointsPerNode);
 		
 		/* Load the node's points into a temporary point buffer: */
-		LidarPoint* pointsBuffer=new LidarPoint[maxNumPointsPerNode];
+		Misc::SelfDestructArray<LidarPoint> pointsBuffer(maxNumPointsPerNode);
 		pointsFile.setReadPosAbs(LidarDataFileHeader::getFileSize()+pointsRecordSize*node->dataOffset);
-		pointsFile.read(pointsBuffer,node->numPoints);
+		pointsFile.read(pointsBuffer.getArray(),node->numPoints);
 		
 		if(colorsFile!=0)
 			{
 			/* Load the node's colors into a temporary buffer: */
-			Color* colorsBuffer=new Color[maxNumPointsPerNode];
+			Misc::SelfDestructArray<Color> colorsBuffer(maxNumPointsPerNode);
 			colorsFile->setReadPosAbs(LidarDataFileHeader::getFileSize()+colorsRecordSize*node->dataOffset);
-			colorsFile->read(colorsBuffer,node->numPoints);
+			colorsFile->read(colorsBuffer.getArray(),node->numPoints);
 			
 			/* Copy the colors into the point buffer: */
-			for(unsigned int i=0;i<node->numPoints;++i)
+			LidarPoint* pPtr=pointsBuffer.getArray();
+			Color* cPtr=colorsBuffer.getArray();
+			for(unsigned int i=0;i<node->numPoints;++i,++pPtr,++cPtr)
 				for(int j=0;j<4;++j)
-					pointsBuffer[i].value[j]=colorsBuffer[i][j];
-			
-			/* Clean up: */
-			delete[] colorsBuffer;
+					pPtr->value[j]=(*cPtr)[j];
 			}
 		
 		/* Convert the LiDAR points to render points: */
-		for(unsigned int i=0;i<node->numPoints;++i)
+		Vertex* npPtr=points.getArray();
+		const LidarPoint* pPtr=pointsBuffer.getArray();
+		for(unsigned int i=0;i<node->numPoints;++i,++npPtr,++pPtr)
 			{
 			/* Copy the point color: */
 			for(int j=0;j<4;++j)
-				points[i].color[j]=pointsBuffer[i].value[j];
+				npPtr->color[j]=pPtr->value[j];
 			
 			/* Copy the point position: */
-			points[i].position=pointsBuffer[i];
+			npPtr->position=*pPtr;
+			
 			#if RECENTER_OCTREE
 			/* Offset the points so that the root node's center is the origin: */
-			points[i].position-=pointOffset;
+			npPtr->position-=pointOffset;
 			#endif
 			}
 		
-		/* Clean up: */
-		delete[] pointsBuffer;
+		/* Store the new point array in the node: */
+		node->points=points.releaseTarget();
 		}
 	}
 
@@ -1008,50 +1015,68 @@ void* LidarOctree::nodeLoaderThreadMethod(void)
 		
 		/* Create the node's children: */
 		Node* children=new Node[8];
-		indexFile.setReadPosAbs(node->childrenOffset);
-		for(int childIndex=0;childIndex<8;++childIndex)
+		bool childrenOk=true;
+		
+		try
 			{
-			LidarOctreeFileNode ofn;
-			ofn.read(indexFile);
-			children[childIndex].parent=node;
-			children[childIndex].childrenOffset=ofn.childrenOffset;
-			children[childIndex].domain=Cube(node->domain,childIndex);
-			children[childIndex].radius=Math::div2(node->radius);
-			children[childIndex].numPoints=ofn.numPoints;
-			children[childIndex].haveNormals=node->haveNormals;
-			children[childIndex].dataOffset=ofn.dataOffset;
-			children[childIndex].detailSize=ofn.detailSize;
-			children[childIndex].subdivisionQueueIndex=subdivisionRequestQueueLength;
+			indexFile.setReadPosAbs(node->childrenOffset);
+			for(int childIndex=0;childIndex<8;++childIndex)
+				{
+				LidarOctreeFileNode ofn;
+				ofn.read(indexFile);
+				children[childIndex].parent=node;
+				children[childIndex].childrenOffset=ofn.childrenOffset;
+				children[childIndex].domain=Cube(node->domain,childIndex);
+				children[childIndex].radius=Math::div2(node->radius);
+				children[childIndex].numPoints=ofn.numPoints;
+				children[childIndex].haveNormals=node->haveNormals;
+				children[childIndex].dataOffset=ofn.dataOffset;
+				children[childIndex].detailSize=ofn.detailSize;
+				children[childIndex].subdivisionQueueIndex=subdivisionRequestQueueLength;
+				}
+
+			/* Load the node's children's point data: */
+			for(int childIndex=0;childIndex<8;++childIndex)
+				loadNodePoints(&children[childIndex]);
+			}
+		catch(std::runtime_error err)
+			{
+			/* Something went wrong while loading the children's data from disk: */
+			childrenOk=false;
 			}
 		
-		/* Load the node's children's point data: */
-		for(int childIndex=0;childIndex<8;++childIndex)
-			loadNodePoints(&children[childIndex]);
-		
-		{
-		Threads::Mutex::Lock nodeSelectionLock(node->selectionMutex);
-		if(node->selectedPoints!=0)
+		if(childrenOk)
 			{
-			/* Propagate selected points from the node to its children: */
-			if(node->haveNormals)
-				propagateSelectedPoints<NVertex>(node,children);
-			else
-				propagateSelectedPoints<Vertex>(node,children);
+			{
+			Threads::Mutex::Lock nodeSelectionLock(node->selectionMutex);
+			if(node->selectedPoints!=0)
+				{
+				/* Propagate selected points from the node to its children: */
+				if(node->haveNormals)
+					propagateSelectedPoints<NVertex>(node,children);
+				else
+					propagateSelectedPoints<Vertex>(node,children);
+				}
 			}
-		}
-		
-		/* Add the new child nodes to the ready list: */
-		{
-		Threads::Mutex::Lock readyNodesLock(readyNodesMutex);
-		readyNodes.push_back(children);
-		}
-		
-		/* Notify a user program: */
-		{
-		Threads::Mutex::Lock treeUpdateFunctionLock(treeUpdateFunctionMutex);
-		if(treeUpdateFunction!=0)
-			treeUpdateFunction(treeUpdateFunctionArg);
-		}
+			
+			/* Add the new child nodes to the ready list: */
+			{
+			Threads::Mutex::Lock readyNodesLock(readyNodesMutex);
+			readyNodes.push_back(children);
+			}
+			
+			/* Notify a user program: */
+			{
+			Threads::Mutex::Lock treeUpdateFunctionLock(treeUpdateFunctionMutex);
+			if(treeUpdateFunction!=0)
+				treeUpdateFunction(treeUpdateFunctionArg);
+			}
+			}
+		else
+			{
+			/* Delete the child nodes again and carry on: */
+			delete[] children;
+			}
 		}
 	
 	return 0;

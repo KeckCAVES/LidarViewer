@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor class to calculate a normal vector for a
 point in a LiDAR data set.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2014 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -188,6 +188,9 @@ void RadiusNormalCalculator::prepare(const Point& newQueryPoint)
 	pys=0.0;
 	pzs=0.0;
 	numPoints=0;
+	
+	/* Reset the closest distance: */
+	closestDist2=radius2;
 	}
 
 NormalCalculator::Plane RadiusNormalCalculator::calcPlane(void) const
@@ -375,4 +378,17 @@ NormalCalculator::Plane NumberRadiusNormalCalculator::calcPlane(void) const
 	
 	/* Return the plane equation: */
 	return Plane(calcNormal(c),Plane::Point(pxs/np,pys/np,pzs/np));
+	}
+
+Scalar NumberRadiusNormalCalculator::getClosestDist(void) const
+	{
+	/* Find the closest non-identical neighbor: */
+	Scalar result2=maxDist2;
+	for(unsigned int i=0;i<currentNumNeighbors;++i)
+		{
+		if(neighbors[i].dist2>Scalar(0)&&result2>neighbors[i].dist2)
+			result2=neighbors[i].dist2;
+		}
+	
+	return Math::sqrt(result2);
 	}
