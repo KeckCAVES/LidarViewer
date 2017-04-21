@@ -1,6 +1,6 @@
 /***********************************************************************
 ReadPlyFile - Function to read 3D polygon files in PLY format.
-Copyright (c) 2004-2011 Oliver Kreylos
+Copyright (c) 2004-2014 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -765,7 +765,7 @@ struct PlyFileHeader // Structure containing relevant information from a PLY fil
 	};
 
 template <class PlyFileParam>
-void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulator& pa)
+void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulator& pa,const char* plyColorNames[3])
 	{
 	/* Get the indices of all relevant vertex value components: */
 	unsigned int posIndex[3];
@@ -773,9 +773,8 @@ void readPlyFileVertices(const Element& vertex,PlyFileParam& ply,PointAccumulato
 	posIndex[1]=vertex.getPropertyIndex("y");
 	posIndex[2]=vertex.getPropertyIndex("z");
 	unsigned int colIndex[3];
-	colIndex[0]=vertex.getPropertyIndex("red");
-	colIndex[1]=vertex.getPropertyIndex("green");
-	colIndex[2]=vertex.getPropertyIndex("blue");
+	for(int i=0;i<3;++i)
+		colIndex[i]=vertex.getPropertyIndex(plyColorNames[i]);
 	bool hasColor=colIndex[0]<vertex.getNumProperties()&&colIndex[1]<vertex.getNumProperties()&&colIndex[2]<vertex.getNumProperties();
 	
 	/* Read all vertices: */
@@ -835,7 +834,7 @@ void skipElement(const Element& element,IO::ValueSource& ply)
 	}
 
 template <class PlyFileParam>
-void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccumulator& pa)
+void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccumulator& pa,const char* plyColorNames[3])
 	{
 	/* Process all elements in order: */
 	for(size_t elementIndex=0;elementIndex<header.getNumElements();++elementIndex)
@@ -847,7 +846,7 @@ void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccu
 		if(element.isElement("vertex"))
 			{
 			/* Read the vertex element: */
-			readPlyFileVertices(element,ply,pa);
+			readPlyFileVertices(element,ply,pa,plyColorNames);
 			}
 		else
 			{
@@ -859,7 +858,7 @@ void readPlyFileElements(const PlyFileHeader& header,PlyFileParam& ply,PointAccu
 
 }
 
-void readPlyFile(PointAccumulator& pa,const char* fileName)
+void readPlyFile(PointAccumulator& pa,const char* fileName,const char* plyColorNames[3])
 	{
 	/* Open the PLY file: */
 	IO::FilePtr plyFile(IO::openFile(fileName));
@@ -879,7 +878,7 @@ void readPlyFile(PointAccumulator& pa,const char* fileName)
 		IO::ValueSource ply(plyFile);
 		
 		/* Read the PLY file in ASCII mode: */
-		readPlyFileElements(header,ply,pa);
+		readPlyFileElements(header,ply,pa,plyColorNames);
 		}
 	else if(header.getFileType()==PlyFileHeader::Binary)
 		{
@@ -887,6 +886,6 @@ void readPlyFile(PointAccumulator& pa,const char* fileName)
 		plyFile->setEndianness(header.getFileEndianness());
 		
 		/* Read the PLY file in binary mode: */
-		readPlyFileElements(header,*plyFile,pa);
+		readPlyFileElements(header,*plyFile,pa,plyColorNames);
 		}
 	}

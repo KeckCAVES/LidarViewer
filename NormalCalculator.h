@@ -1,7 +1,7 @@
 /***********************************************************************
 NormalCalculator - Functor classes to calculate a normal vector for each
 point in a LiDAR data set.
-Copyright (c) 2008-2011 Oliver Kreylos
+Copyright (c) 2008-2014 Oliver Kreylos
 
 This file is part of the LiDAR processing and analysis package.
 
@@ -62,6 +62,7 @@ class RadiusNormalCalculator:public NormalCalculator // Class to calculate norma
 	Point queryPoint; // The query point for which to calculate a plane equation
 	double pxpxs,pxpys,pxpzs,pypys,pypzs,pzpzs,pxs,pys,pzs; // Accumulated components of covariance matrix
 	size_t numPoints; // Number of accumulated points
+	Scalar closestDist2; // Squared distance to query point's closest non-identical neighbor
 	
 	/* Constructors and destructors: */
 	public:
@@ -71,7 +72,8 @@ class RadiusNormalCalculator:public NormalCalculator // Class to calculate norma
 	void operator()(const LidarPoint& lp) // Process the given LiDAR point
 		{
 		/* Check if the point is inside the search radius: */
-		if(Geometry::sqrDist(lp,queryPoint)<=radius2)
+		Scalar dist2=Geometry::sqrDist(lp,queryPoint);
+		if(dist2<=radius2)
 			{
 			/* Accumulate the node point: */
 			pxpxs+=double(lp[0])*double(lp[0]);
@@ -85,6 +87,10 @@ class RadiusNormalCalculator:public NormalCalculator // Class to calculate norma
 			pzs+=double(lp[2]);
 			
 			++numPoints;
+			
+			/* Check if this is the closest neighbor yet: */
+			if(dist2>Scalar(0)&&closestDist2>=dist2)
+				closestDist2=dist2;
 			}
 		}
 	const Point& getQueryPoint(void) const
@@ -102,6 +108,10 @@ class RadiusNormalCalculator:public NormalCalculator // Class to calculate norma
 		return numPoints;
 		}
 	Plane calcPlane(void) const; // Returns the least-squares plane fitting the processed points
+	Scalar getClosestDist(void) const // Returns the distance to the closest non-identical neighbor
+		{
+		return Math::sqrt(closestDist2);
+		}
 	};
 
 class NumberRadiusNormalCalculator:public NormalCalculator // Class to calculate normal vectors by accumulating points from a neighborhood of maximum size and maximum number of neighbors
@@ -150,6 +160,7 @@ class NumberRadiusNormalCalculator:public NormalCalculator // Class to calculate
 		return currentNumNeighbors;
 		}
 	Plane calcPlane(void) const; // Returns the least-squares plane fitting the processed points
+	Scalar getClosestDist(void) const; // Returns the distance to the closest non-identical neighbor
 	};
 
 template <class NormalCalculatorParam>

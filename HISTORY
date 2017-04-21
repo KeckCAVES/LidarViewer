@@ -157,3 +157,8 @@ LiDAR Viewer 2.11:
 
 LiDAR Viewer 2.12:
 - Bumped Vrui version requirement to 3.0-001.
+
+LiDAR Viewer 2.13:
+- Added "Environment" tab to render dialog to control background color
+  and draw distance dynamically.
+- Bumped Vrui requirement to 4.2-006 and fixed some incompatibilities.

@@ -1,7 +1,7 @@
 ########################################################################
 # Makefile for LiDAR Viewer, a visualization and analysis application
 # for large 3D point cloud data.
-# Copyright (c) 2004-2013 Oliver Kreylos
+# Copyright (c) 2004-2017 Oliver Kreylos
 #
 # This file is part of the WhyTools Build Environment.
 # 
@@ -25,7 +25,7 @@
 # matches the default Vrui installation; if Vrui's installation
 # directory was changed during Vrui's installation, the directory below
 # must be adapted.
-VRUI_MAKEDIR := $(HOME)/Vrui-3.0/share/make
+VRUI_MAKEDIR := /usr/local/share/Vrui-4.2/make
 ifdef DEBUG
   VRUI_MAKEDIR = $(VRUI_MAKEDIR)/debug
 endif
@@ -46,7 +46,7 @@ INSTALLDIR := $(shell pwd)
 # subsequent release versions of LiDAR Viewer from clobbering each
 # other. The value should be identical to the major.minor version
 # number found in VERSION in the root package directory.
-VERSION = 2.12
+VERSION = 2.13
 
 # Set up resource directories: */
 CONFIGDIR = etc/LidarViewer-$(VERSION)
